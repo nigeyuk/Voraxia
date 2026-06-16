@@ -1,30 +1,155 @@
+# =============================================================================
+# Voraxia Unreal Engine .gitignore
+# Keep source, config, maps, content, and Voraxia assets.
+# Ignore generated files, caches, local IDE settings, and build output.
+# =============================================================================
+
+
+# =============================================================================
 # Unreal generated folders
-Binaries/
-DerivedDataCache/
-Intermediate/
-Saved/
+# =============================================================================
 
-# Build artifacts
-*.target
-*.modules
-*.version
+/Binaries/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
 
-# IDE generated files
-.vs/
-.vscode/
-.idea/
+# Per-project local generated files
 *.sln
-*.suo
-*.opensdf
-*.sdf
 *.VC.db
 *.VC.opendb
-*.code-workspace
+*.opensdf
+*.sdf
+*.suo
+*.xcodeproj
+*.xcworkspace
 
-# OS noise
-.DS_Store
-Thumbs.db
 
-# Crash/debug output
+# =============================================================================
+# Unreal local files
+# =============================================================================
+
 *.log
 *.tmp
+*.bak
+*.cache
+*.pdb
+*.obj
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
+
+# Crash reports
+crashinfo--*
+/Saved/Crashes/
+/Saved/Logs/
+/Saved/Autosaves/
+/Saved/Backup/
+
+
+# =============================================================================
+# Visual Studio
+# =============================================================================
+
+.vs/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+ipch/
+*.ipch
+
+
+# =============================================================================
+# Rider / JetBrains
+# =============================================================================
+
+.idea/
+*.DotSettings.user
+_ReSharper*/
+*.sln.iml
+
+
+# =============================================================================
+# VS Code
+# =============================================================================
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+
+# =============================================================================
+# Operating system junk
+# =============================================================================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+
+# =============================================================================
+# Python/tooling junk
+# =============================================================================
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.python-version
+.venv/
+venv/
+env/
+
+
+# =============================================================================
+# Build/package output
+# =============================================================================
+
+/Packages/
+/Packaged/
+/StagedBuilds/
+/Releases/
+/LocalBuilds/
+/Builds/
+
+
+# =============================================================================
+# Unreal Marketplace/cache/plugin generated output
+# =============================================================================
+
+/Plugins/*/Binaries/
+/Plugins/*/Intermediate/
+/Plugins/*/Saved/
+
+
+# =============================================================================
+# Do NOT ignore the actual game content
+# =============================================================================
+
+!/Config/
+!/Content/
+!/Content/**
+
+!/Content/Maps/
+!/Content/Maps/**
+
+!/Content/_Voraxia/
+!/Content/_Voraxia/**
+
+!/Source/
+!/Source/**
+
+!/Plugins/
+!/Plugins/**
+!/Plugins/*/Source/
+!/Plugins/*/Source/**
+
+!/README.md
+!/.gitignore
