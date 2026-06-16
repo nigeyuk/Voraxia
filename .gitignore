@@ -1,0 +1,30 @@
+# Unreal generated folders
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Build artifacts
+*.target
+*.modules
+*.version
+
+# IDE generated files
+.vs/
+.vscode/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.code-workspace
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Crash/debug output
+*.log
+*.tmp
