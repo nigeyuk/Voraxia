@@ -1,13 +1,18 @@
-{	
-    "FileVersion": 3,
+{
+	"FileVersion": 3,
 	"EngineAssociation": "5.7",
-    "Category": "Games",
-    "Description": "Blank C++ Unreal project skeleton for Voraxia.",
-    "Modules": [
-        {
-            "Name": "Voraxia",
-            "Type": "Runtime",
-            "LoadingPhase": "Default"
-        }
-    ]
+	"Category": "Games",
+	"Description": "Blank C++ Unreal project skeleton for Voraxia.",
+	"Modules": [
+		{
+			"Name": "Voraxia",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "VoraxiaLog",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
 }

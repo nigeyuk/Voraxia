@@ -9,6 +9,7 @@
 
 class UCameraComponent;
 class USpringArmComponent;
+class UVoraxiaRaptorToolComponent;
 
 UCLASS(Blueprintable)
 class VORAXIA_API AVoraxiaPlayerCharacter : public AVoraxiaPlayerCharacterBase
@@ -31,8 +32,12 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voraxia|Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> FollowCamera;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voraxia|Raptor", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UVoraxiaRaptorToolComponent> RaptorTool;
 
 public:
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
+	FORCEINLINE UVoraxiaRaptorToolComponent* GetRaptorTool() const { return RaptorTool; }
 };

@@ -10,7 +10,9 @@ public class Voraxia : ModuleRules
         {
             "Core",
             "CoreUObject",
-            "Engine"
+            "Engine",
+            "VoraxiaLog",
+            "DeveloperSettings"
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]

@@ -1,0 +1,11 @@
+// Copyright 2026 Coding Custard Studios.
+
+#pragma once
+
+#include "CoreMinimal.h"
+
+VORAXIALOG_API DECLARE_LOG_CATEGORY_EXTERN(LogVoraxia, Log, All);
+VORAXIALOG_API DECLARE_LOG_CATEGORY_EXTERN(LogVoraxiaGame, Log, All);
+VORAXIALOG_API DECLARE_LOG_CATEGORY_EXTERN(LogVoraxiaInput, Log, All);
+VORAXIALOG_API DECLARE_LOG_CATEGORY_EXTERN(LogVoraxiaCamera, Log, All);
+VORAXIALOG_API DECLARE_LOG_CATEGORY_EXTERN(LogVoraxiaCharacter, Log, All);

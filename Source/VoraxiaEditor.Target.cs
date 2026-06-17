@@ -10,5 +10,11 @@ public class VoraxiaEditorTarget : TargetRules
         IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 
         ExtraModuleNames.Add("Voraxia");
+        RegisterModulesCreatedByRider();
+    }
+
+    private void RegisterModulesCreatedByRider()
+    {
+        ExtraModuleNames.AddRange(new string[] { "VoraxiaLog" });
     }
 }

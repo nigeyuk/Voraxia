@@ -2,6 +2,9 @@
 
 #include "Player/VoraxiaPlayerController.h"
 
+#include "Settings/VoraxiaDeveloperSettings.h"
+#include "VoraxiaLogCategories.h"
+
 AVoraxiaPlayerController::AVoraxiaPlayerController()
 {
 	bShowMouseCursor = false;
@@ -13,6 +16,13 @@ void AVoraxiaPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	SetInputMode(FInputModeGameOnly());
+	
+	const UVoraxiaDeveloperSettings* Settings = UVoraxiaDeveloperSettings::Get();
+	
+	if (Settings && Settings->bEnableVoraxiaDebugging && Settings->bLogCharacterLifecycle)
+	{
+		UE_LOG(LogVoraxiaGame, Log, TEXT("Voraxia player Controller BeginPlay."));
+	}
 }
 
 void AVoraxiaPlayerController::SetupInputComponent()
