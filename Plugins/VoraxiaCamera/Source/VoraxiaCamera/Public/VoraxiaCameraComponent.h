@@ -210,6 +210,18 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
 	float CollisionRecoverySpeed = 12.0f;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision|Predictive Avoidance", meta=(EditCondition="bEnableCameraCollision"))
+	bool bEnablePredictiveAvoidance = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision|Predictive Avoidance", meta=(EditCondition="bEnablePredictiveAvoidance", ClampMin="0.0"))
+	float FeelerYawOffset = 18.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision|Predictive Avoidance", meta=(EditCondition="bEnablePredictiveAvoidance", ClampMin="0", UIMin="0", UIMax="4"))
+	int32 FeelerPairs = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision|Predictive Avoidance", meta=(EditCondition="bEnablePredictiveAvoidance", ClampMin="1.0"))
+	float FeelerProbeRadius = 8.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")
 	bool bDrawCameraCollisionDebug = false;
@@ -286,6 +298,15 @@ private:
 	FVector CalculatePivotLocation() const;
 	FTransform CalculateCameraTransform(float DeltaTime);
 	FVector ResolveCameraCollision(const FVector& PivotLocation, const FVector& DesiredCameraLocation, float DeltaTime);
+	
+	bool SweepCameraCollisionProbe(
+	const FVector& PivotLocation,
+	const FVector& DirectionFromPivot,
+	float DesiredDistanceFromPivot,
+	float ProbeRadius,
+	float& OutSafeDistanceFromPivot,
+	FHitResult& OutHit
+	) const;
 
 	void ApplyCameraTransform(float DeltaTime);
 	float CalculateFinalFOV() const;

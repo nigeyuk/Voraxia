@@ -711,6 +711,74 @@ FTransform UVoraxiaCameraComponent::CalculateCameraTransform(const float DeltaTi
 	return FTransform(SmoothedRotation, FinalCameraLocation);
 }
 
+bool UVoraxiaCameraComponent::SweepCameraCollisionProbe(
+	const FVector& PivotLocation,
+	const FVector& DirectionFromPivot,
+	const float DesiredDistanceFromPivot,
+	const float ProbeRadius,
+	float& OutSafeDistanceFromPivot,
+	FHitResult& OutHit
+) const
+{
+	OutSafeDistanceFromPivot = DesiredDistanceFromPivot;
+	OutHit = FHitResult();
+
+	if (!GetWorld() || DesiredDistanceFromPivot <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	const FVector SafeDirection = DirectionFromPivot.GetSafeNormal();
+
+	if (SafeDirection.IsNearlyZero())
+	{
+		return false;
+	}
+
+	const float ClampedProbeStartOffset = FMath::Clamp(
+		CollisionProbeStartOffset,
+		0.0f,
+		DesiredDistanceFromPivot
+	);
+
+	const FVector TraceStart = PivotLocation + SafeDirection * ClampedProbeStartOffset;
+	const FVector TraceEnd = PivotLocation + SafeDirection * DesiredDistanceFromPivot;
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.bTraceComplex = false;
+	QueryParams.bReturnPhysicalMaterial = false;
+
+	if (const AActor* Owner = GetOwner())
+	{
+		QueryParams.AddIgnoredActor(Owner);
+	}
+
+	const bool bHit = GetWorld()->SweepSingleByChannel(
+		OutHit,
+		TraceStart,
+		TraceEnd,
+		FQuat::Identity,
+		CameraCollisionChannel,
+		FCollisionShape::MakeSphere(FMath::Max(1.0f, ProbeRadius)),
+		QueryParams
+	);
+
+	if (!bHit)
+	{
+		return false;
+	}
+
+	const float HitDistanceFromPivot = FVector::Dist(PivotLocation, OutHit.Location);
+
+	OutSafeDistanceFromPivot = FMath::Clamp(
+		HitDistanceFromPivot - CollisionSafetyPadding,
+		FMath::Min(MinDistanceFromPivot, DesiredDistanceFromPivot),
+		DesiredDistanceFromPivot
+	);
+
+	return true;
+}
+
 FVector UVoraxiaCameraComponent::ResolveCameraCollision(
 	const FVector& PivotLocation,
 	const FVector& DesiredCameraLocation,
@@ -736,46 +804,108 @@ FVector UVoraxiaCameraComponent::ResolveCameraCollision(
 
 	const FVector DirectionFromPivot = DesiredVector / DesiredDistanceFromPivot;
 
-	const float ClampedProbeStartOffset = FMath::Clamp(
-		CollisionProbeStartOffset,
-		0.0f,
-		DesiredDistanceFromPivot
-	);
-
-	const FVector TraceStart = PivotLocation + DirectionFromPivot * ClampedProbeStartOffset;
-	const FVector TraceEnd = DesiredCameraLocation;
-
-	FCollisionQueryParams QueryParams;
-	QueryParams.bTraceComplex = false;
-	QueryParams.bReturnPhysicalMaterial = false;
-
-	if (const AActor* Owner = GetOwner())
-	{
-		QueryParams.AddIgnoredActor(Owner);
-	}
-
-	FHitResult Hit;
-	const bool bHit = GetWorld()->SweepSingleByChannel(
-		Hit,
-		TraceStart,
-		TraceEnd,
-		FQuat::Identity,
-		CameraCollisionChannel,
-		FCollisionShape::MakeSphere(FMath::Max(1.0f, CameraCollisionRadius)),
-		QueryParams
-	);
-
 	float SafeDistanceFromPivot = DesiredDistanceFromPivot;
 
-	if (bHit)
-	{
-		const float HitDistanceFromPivot = FVector::Dist(PivotLocation, Hit.Location);
+	FHitResult MainHit;
+	float MainSafeDistance = DesiredDistanceFromPivot;
 
-		SafeDistanceFromPivot = FMath::Clamp(
-			HitDistanceFromPivot - CollisionSafetyPadding,
-			FMath::Min(MinDistanceFromPivot, DesiredDistanceFromPivot),
-			DesiredDistanceFromPivot
-		);
+	const bool bMainHit = SweepCameraCollisionProbe(
+		PivotLocation,
+		DirectionFromPivot,
+		DesiredDistanceFromPivot,
+		CameraCollisionRadius,
+		MainSafeDistance,
+		MainHit
+	);
+
+	if (bMainHit)
+	{
+		SafeDistanceFromPivot = FMath::Min(SafeDistanceFromPivot, MainSafeDistance);
+	}
+
+	bool bAnyFeelerHit = false;
+	FHitResult BestFeelerHit;
+	float BestFeelerSafeDistance = DesiredDistanceFromPivot;
+
+	if (bEnablePredictiveAvoidance && FeelerPairs > 0)
+	{
+		const int32 SafeFeelerPairs = FMath::Clamp(FeelerPairs, 0, 8);
+		const float SafeFeelerYawOffset = FMath::Max(0.0f, FeelerYawOffset);
+		const float SafeFeelerRadius = FMath::Max(1.0f, FeelerProbeRadius);
+
+		for (int32 PairIndex = 1; PairIndex <= SafeFeelerPairs; ++PairIndex)
+		{
+			const float PairYawOffset = SafeFeelerYawOffset * static_cast<float>(PairIndex);
+
+			for (const float DirectionSign : { -1.0f, 1.0f })
+			{
+				const float FeelerYaw = PairYawOffset * DirectionSign;
+
+				const FVector FeelerDirection =
+					FRotator(0.0f, FeelerYaw, 0.0f).RotateVector(DirectionFromPivot).GetSafeNormal();
+
+				FHitResult FeelerHit;
+				float FeelerSafeDistance = DesiredDistanceFromPivot;
+
+				const bool bFeelerHit = SweepCameraCollisionProbe(
+					PivotLocation,
+					FeelerDirection,
+					DesiredDistanceFromPivot,
+					SafeFeelerRadius,
+					FeelerSafeDistance,
+					FeelerHit
+				);
+
+				if (bDrawCameraCollisionDebug)
+				{
+					const FVector DebugStart =
+						PivotLocation
+						+ FeelerDirection
+						* FMath::Clamp(CollisionProbeStartOffset, 0.0f, DesiredDistanceFromPivot);
+
+					const FVector DebugEnd =
+						PivotLocation
+						+ FeelerDirection
+						* DesiredDistanceFromPivot;
+
+					DrawDebugLine(
+						GetWorld(),
+						DebugStart,
+						DebugEnd,
+						bFeelerHit ? FColor::Yellow : FColor::Cyan,
+						false,
+						0.0f,
+						0,
+						0.5f
+					);
+
+					if (bFeelerHit)
+					{
+						DrawDebugSphere(
+							GetWorld(),
+							FeelerHit.Location,
+							SafeFeelerRadius,
+							8,
+							FColor::Yellow,
+							false,
+							0.0f
+						);
+					}
+				}
+
+				if (bFeelerHit && FeelerSafeDistance < BestFeelerSafeDistance)
+				{
+					bAnyFeelerHit = true;
+					BestFeelerHit = FeelerHit;
+					BestFeelerSafeDistance = FeelerSafeDistance;
+				}
+			}
+		}
+	}
+
+	if (bAnyFeelerHit)
+	{
+		SafeDistanceFromPivot = FMath::Min(SafeDistanceFromPivot, BestFeelerSafeDistance);
 	}
 
 	if (CurrentCollisionDistanceFromPivot < 0.0f || DeltaTime <= KINDA_SMALL_NUMBER)
@@ -804,24 +934,33 @@ FVector UVoraxiaCameraComponent::ResolveCameraCollision(
 		DesiredDistanceFromPivot
 	);
 
-	bWasCameraCollisionBlocked = bHit;
+	bWasCameraCollisionBlocked = bMainHit || bAnyFeelerHit;
 
 	const FVector FinalCameraLocation =
 		PivotLocation + DirectionFromPivot * CurrentCollisionDistanceFromPivot;
 
 	if (bDrawCameraCollisionDebug)
 	{
-		const FColor LineColor = bHit ? FColor::Red : FColor::Green;
+		const float ClampedProbeStartOffset = FMath::Clamp(
+			CollisionProbeStartOffset,
+			0.0f,
+			DesiredDistanceFromPivot
+		);
+
+		const FVector TraceStart = PivotLocation + DirectionFromPivot * ClampedProbeStartOffset;
+		const FVector TraceEnd = DesiredCameraLocation;
+
+		const FColor MainLineColor = bMainHit ? FColor::Red : FColor::Green;
 
 		DrawDebugLine(
 			GetWorld(),
 			TraceStart,
 			TraceEnd,
-			LineColor,
+			MainLineColor,
 			false,
 			0.0f,
 			0,
-			1.0f
+			1.5f
 		);
 
 		DrawDebugSphere(
@@ -829,19 +968,32 @@ FVector UVoraxiaCameraComponent::ResolveCameraCollision(
 			FinalCameraLocation,
 			CameraCollisionRadius,
 			12,
-			LineColor,
+			MainLineColor,
 			false,
 			0.0f
 		);
 
-		if (bHit)
+		if (bMainHit)
 		{
 			DrawDebugSphere(
 				GetWorld(),
-				Hit.Location,
+				MainHit.Location,
 				CameraCollisionRadius,
 				12,
 				FColor::Orange,
+				false,
+				0.0f
+			);
+		}
+
+		if (bAnyFeelerHit)
+		{
+			DrawDebugSphere(
+				GetWorld(),
+				BestFeelerHit.Location,
+				FeelerProbeRadius,
+				12,
+				FColor::Purple,
 				false,
 				0.0f
 			);
