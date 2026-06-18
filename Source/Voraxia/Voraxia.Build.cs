@@ -12,7 +12,10 @@ public class Voraxia : ModuleRules
             "CoreUObject",
             "Engine",
             "VoraxiaLog",
-            "DeveloperSettings"
+            "DeveloperSettings",
+            "InputCore",
+            "EnhancedInput",
+            "VoraxiaCamera"
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]

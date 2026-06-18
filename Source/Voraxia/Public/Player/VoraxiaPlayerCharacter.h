@@ -1,43 +1,64 @@
-// Copyright 2026 Coding Custard Studios.
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
-#include "Player/VoraxiaPlayerCharacterBase.h"
 #include "VoraxiaPlayerCharacter.generated.h"
 
 class UCameraComponent;
-class USpringArmComponent;
-class UVoraxiaRaptorToolComponent;
+class UInputAction;
+class UInputMappingContext;
+class UVoraxiaCameraComponent;
 
-UCLASS(Blueprintable)
-class VORAXIA_API AVoraxiaPlayerCharacter : public AVoraxiaPlayerCharacterBase
+struct FInputActionValue;
+
+UCLASS()
+class VORAXIA_API AVoraxiaPlayerCharacter : public ACharacter
 {
 	GENERATED_BODY()
 
 public:
-	AVoraxiaPlayerCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
+	AVoraxiaPlayerCharacter();
 
-protected:
-	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
+	virtual void PawnClientRestart() override;
 
-public:
-	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voraxia|Camera", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<USpringArmComponent> CameraBoom;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
+	TObjectPtr<UCameraComponent> CameraComponent;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voraxia|Camera", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UCameraComponent> FollowCamera;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
+	TObjectPtr<UVoraxiaCameraComponent> VoraxiaCameraComponent;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputMappingContext> DefaultMappingContext;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	int32 MappingContextPriority = 0;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputAction> MoveAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputAction> LookAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputAction> JumpAction;
 	
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voraxia|Raptor", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UVoraxiaRaptorToolComponent> RaptorTool;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement")
+	bool bCharacterFacesCameraYaw = true;
 
-public:
-	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
-	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
-	FORCEINLINE UVoraxiaRaptorToolComponent* GetRaptorTool() const { return RaptorTool; }
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement", meta=(EditCondition="bCharacterFacesCameraYaw"))
+	float FaceCameraYawInterpSpeed = 16.0f;
+
+private:
+	void AddDefaultMappingContext();
+
+	void Move(const FInputActionValue& Value);
+
+	void Look(const FInputActionValue& Value);
+	
+	void UpdateCharacterFacing(float DeltaTime);
+	
 };
