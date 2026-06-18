@@ -1,5 +1,7 @@
 #include "VoraxiaCameraComponent.h"
 
+#include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 #include "Camera/CameraComponent.h"
 #include "Curves/CurveFloat.h"
 #include "GameFramework/Actor.h"
@@ -179,8 +181,7 @@ void UVoraxiaCameraComponent::BeginPlay()
 			*TargetCamera->GetName(),
 			*GetNameSafe(GetOwner())
 		);
-
-		ApplyCameraTransform();
+		ApplyCameraTransform(0.0f);
 	}
 	else
 	{
@@ -208,7 +209,7 @@ void UVoraxiaCameraComponent::TickComponent(
 
 	UpdateRuntimeState(DeltaTime);
 	UpdateInputRotation(DeltaTime);
-	ApplyCameraTransform();
+	ApplyCameraTransform(DeltaTime);
 }
 
 void UVoraxiaCameraComponent::SetTargetCamera(UCameraComponent* InTargetCamera)
@@ -412,10 +413,47 @@ void UVoraxiaCameraComponent::UpdateRuntimeState(const float DeltaTime)
 
 void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 {
-	DesiredRotation.Yaw += PendingYawInput * YawInputSpeed * DeltaTime;
-	DesiredRotation.Pitch += PendingPitchInput * PitchInputSpeed * DeltaTime;
-	DesiredRotation.Pitch = FMath::Clamp(DesiredRotation.Pitch, MinPitch, MaxPitch);
+	const bool bHasYawInput = FMath::Abs(PendingYawInput) > LookInputDeadZone;
+	const bool bHasPitchInput = FMath::Abs(PendingPitchInput) > LookInputDeadZone;
+
+	if (bHasYawInput)
+	{
+		TimeSinceLastYawInput = 0.0f;
+	}
+	else
+	{
+		TimeSinceLastYawInput += DeltaTime;
+	}
+
+	if (bHasPitchInput)
+	{
+		TimeSinceLastPitchInput = 0.0f;
+	}
+	else
+	{
+		TimeSinceLastPitchInput += DeltaTime;
+	}
+
+	if (bHasYawInput)
+	{
+		DesiredRotation.Yaw += PendingYawInput * YawInputSpeed * DeltaTime;
+	}
+
+	if (bHasPitchInput)
+	{
+		const float PitchInputDelta = PendingPitchInput * PitchInputSpeed * DeltaTime;
+		ApplyPitchInputWithConstraints(PitchInputDelta);
+	}
+
+	UpdatePitchFollow(DeltaTime);
+	UpdateYawFollow(DeltaTime);
+
 	DesiredRotation.Roll = 0.0f;
+
+	if (bEnablePitchConstraints)
+	{
+		DesiredRotation.Pitch = FMath::Clamp(DesiredRotation.Pitch, MinPitch, MaxPitch);
+	}
 
 	if (bEnableRotationLag && RotationLagSpeed > KINDA_SMALL_NUMBER)
 	{
@@ -435,6 +473,186 @@ void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 	PendingPitchInput = 0.0f;
 }
 
+void UVoraxiaCameraComponent::ApplyPitchInputWithConstraints(const float PitchInputDelta)
+{
+	if (!bEnablePitchConstraints || PitchConstraintTolerance <= KINDA_SMALL_NUMBER)
+	{
+		DesiredRotation.Pitch = FMath::Clamp(
+			DesiredRotation.Pitch + PitchInputDelta,
+			MinPitch,
+			MaxPitch
+		);
+
+		return;
+	}
+
+	float ConstraintScale = 1.0f;
+
+	if (PitchInputDelta < 0.0f)
+	{
+		const float DistanceToMin = FMath::Max(0.0f, DesiredRotation.Pitch - MinPitch);
+
+		if (DistanceToMin < PitchConstraintTolerance)
+		{
+			ConstraintScale = FMath::Clamp(DistanceToMin / PitchConstraintTolerance, 0.0f, 1.0f);
+		}
+	}
+	else if (PitchInputDelta > 0.0f)
+	{
+		const float DistanceToMax = FMath::Max(0.0f, MaxPitch - DesiredRotation.Pitch);
+
+		if (DistanceToMax < PitchConstraintTolerance)
+		{
+			ConstraintScale = FMath::Clamp(DistanceToMax / PitchConstraintTolerance, 0.0f, 1.0f);
+		}
+	}
+
+	// Smooth the soft-zone response so it does not feel like a sudden mud wall.
+	ConstraintScale = ConstraintScale * ConstraintScale * (3.0f - 2.0f * ConstraintScale);
+
+	DesiredRotation.Pitch = FMath::Clamp(
+		DesiredRotation.Pitch + PitchInputDelta * ConstraintScale,
+		MinPitch,
+		MaxPitch
+	);
+}
+
+bool UVoraxiaCameraComponent::HasRecentYawInput() const
+{
+	return TimeSinceLastYawInput < YawFollowTimeThreshold;
+}
+
+bool UVoraxiaCameraComponent::HasRecentPitchInput() const
+{
+	return TimeSinceLastPitchInput < PitchFollowTimeThreshold;
+}
+
+float UVoraxiaCameraComponent::GetOwnerMovementSpeed2D() const
+{
+	const AActor* Owner = GetOwner();
+
+	if (!Owner)
+	{
+		return 0.0f;
+	}
+
+	return Owner->GetVelocity().Size2D();
+}
+
+float UVoraxiaCameraComponent::GetOwnerMovementYaw() const
+{
+	const AActor* Owner = GetOwner();
+
+	if (!Owner)
+	{
+		return DesiredRotation.Yaw;
+	}
+
+	const FVector Velocity = Owner->GetVelocity();
+	const FVector FlatVelocity(Velocity.X, Velocity.Y, 0.0f);
+
+	if (FlatVelocity.IsNearlyZero())
+	{
+		return DesiredRotation.Yaw;
+	}
+
+	return FlatVelocity.Rotation().Yaw;
+}
+
+void UVoraxiaCameraComponent::UpdatePitchFollow(const float DeltaTime)
+{
+	if (!bEnablePitchMovementFollow)
+	{
+		return;
+	}
+
+	if (HasRecentPitchInput())
+	{
+		return;
+	}
+
+	if (GetOwnerMovementSpeed2D() < PitchFollowMinSpeedThreshold)
+	{
+		return;
+	}
+
+	const float PitchDelta = FMath::Abs(
+		FMath::FindDeltaAngleDegrees(DesiredRotation.Pitch, RestingCameraPitch)
+	);
+
+	if (PitchDelta < PitchFollowAngleThreshold)
+	{
+		return;
+	}
+
+	const float ClampedRestingPitch = FMath::Clamp(RestingCameraPitch, MinPitch, MaxPitch);
+
+	DesiredRotation.Pitch = FMath::FInterpTo(
+		DesiredRotation.Pitch,
+		ClampedRestingPitch,
+		DeltaTime,
+		PitchFollowSpeed
+	);
+}
+
+void UVoraxiaCameraComponent::UpdateYawFollow(const float DeltaTime)
+{
+	if (!bEnableYawMovementFollow)
+	{
+		return;
+	}
+
+	if (HasRecentYawInput())
+	{
+		return;
+	}
+
+	const AActor* Owner = GetOwner();
+
+	if (!Owner)
+	{
+		return;
+	}
+
+	const float Speed2D = GetOwnerMovementSpeed2D();
+
+	if (Speed2D < YawFollowMinSpeedThreshold)
+	{
+		return;
+	}
+
+	if (bYawFollowOnlyForwardMovement && TargetCamera)
+	{
+		const FVector CameraForward = TargetCamera->GetForwardVector().GetSafeNormal2D();
+		const FVector MovementDirection = Owner->GetVelocity().GetSafeNormal2D();
+
+		const float ForwardDot = FVector::DotProduct(CameraForward, MovementDirection);
+
+		// This prevents S/backpedal and pure strafe from dragging the camera around.
+		if (ForwardDot < 0.35f)
+		{
+			return;
+		}
+	}
+
+	const float TargetYaw = GetOwnerMovementYaw();
+
+	const float YawDelta = FMath::Abs(
+		FMath::FindDeltaAngleDegrees(DesiredRotation.Yaw, TargetYaw)
+	);
+
+	if (YawDelta < YawFollowAngleThreshold)
+	{
+		return;
+	}
+
+	DesiredRotation.Yaw = FMath::FixedTurn(
+		DesiredRotation.Yaw,
+		TargetYaw,
+		YawFollowSpeed * 90.0f * DeltaTime
+	);
+}
+
 FVector UVoraxiaCameraComponent::CalculatePivotLocation() const
 {
 	const AActor* Owner = GetOwner();
@@ -449,7 +667,7 @@ FVector UVoraxiaCameraComponent::CalculatePivotLocation() const
 		+ GetCurrentPivotOffset();
 }
 
-FTransform UVoraxiaCameraComponent::CalculateCameraTransform() const
+FTransform UVoraxiaCameraComponent::CalculateCameraTransform(const float DeltaTime)
 {
 	const FVector PivotLocation = CalculatePivotLocation();
 
@@ -478,23 +696,169 @@ FTransform UVoraxiaCameraComponent::CalculateCameraTransform() const
 		}
 	}
 
-	const FVector CameraLocation =
+	const FVector DesiredCameraLocation =
 		PivotLocation
 		+ Forward * LocalFromPivot.X
 		+ Right * LocalFromPivot.Y
 		+ Up * LocalFromPivot.Z;
 
-	return FTransform(SmoothedRotation, CameraLocation);
+	const FVector FinalCameraLocation = ResolveCameraCollision(
+		PivotLocation,
+		DesiredCameraLocation,
+		DeltaTime
+	);
+
+	return FTransform(SmoothedRotation, FinalCameraLocation);
 }
 
-void UVoraxiaCameraComponent::ApplyCameraTransform()
+FVector UVoraxiaCameraComponent::ResolveCameraCollision(
+	const FVector& PivotLocation,
+	const FVector& DesiredCameraLocation,
+	const float DeltaTime
+)
+{
+	const FVector DesiredVector = DesiredCameraLocation - PivotLocation;
+	const float DesiredDistanceFromPivot = DesiredVector.Size();
+
+	if (DesiredDistanceFromPivot <= KINDA_SMALL_NUMBER)
+	{
+		CurrentCollisionDistanceFromPivot = 0.0f;
+		bWasCameraCollisionBlocked = false;
+		return DesiredCameraLocation;
+	}
+
+	if (!bEnableCameraCollision || !GetWorld())
+	{
+		CurrentCollisionDistanceFromPivot = DesiredDistanceFromPivot;
+		bWasCameraCollisionBlocked = false;
+		return DesiredCameraLocation;
+	}
+
+	const FVector DirectionFromPivot = DesiredVector / DesiredDistanceFromPivot;
+
+	const float ClampedProbeStartOffset = FMath::Clamp(
+		CollisionProbeStartOffset,
+		0.0f,
+		DesiredDistanceFromPivot
+	);
+
+	const FVector TraceStart = PivotLocation + DirectionFromPivot * ClampedProbeStartOffset;
+	const FVector TraceEnd = DesiredCameraLocation;
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.bTraceComplex = false;
+	QueryParams.bReturnPhysicalMaterial = false;
+
+	if (const AActor* Owner = GetOwner())
+	{
+		QueryParams.AddIgnoredActor(Owner);
+	}
+
+	FHitResult Hit;
+	const bool bHit = GetWorld()->SweepSingleByChannel(
+		Hit,
+		TraceStart,
+		TraceEnd,
+		FQuat::Identity,
+		CameraCollisionChannel,
+		FCollisionShape::MakeSphere(FMath::Max(1.0f, CameraCollisionRadius)),
+		QueryParams
+	);
+
+	float SafeDistanceFromPivot = DesiredDistanceFromPivot;
+
+	if (bHit)
+	{
+		const float HitDistanceFromPivot = FVector::Dist(PivotLocation, Hit.Location);
+
+		SafeDistanceFromPivot = FMath::Clamp(
+			HitDistanceFromPivot - CollisionSafetyPadding,
+			FMath::Min(MinDistanceFromPivot, DesiredDistanceFromPivot),
+			DesiredDistanceFromPivot
+		);
+	}
+
+	if (CurrentCollisionDistanceFromPivot < 0.0f || DeltaTime <= KINDA_SMALL_NUMBER)
+	{
+		CurrentCollisionDistanceFromPivot = SafeDistanceFromPivot;
+	}
+	else
+	{
+		const bool bCompressing = SafeDistanceFromPivot < CurrentCollisionDistanceFromPivot;
+
+		const float InterpSpeed = bCompressing
+			? CollisionCompressionSpeed
+			: CollisionRecoverySpeed;
+
+		CurrentCollisionDistanceFromPivot = FMath::FInterpTo(
+			CurrentCollisionDistanceFromPivot,
+			SafeDistanceFromPivot,
+			DeltaTime,
+			InterpSpeed
+		);
+	}
+
+	CurrentCollisionDistanceFromPivot = FMath::Clamp(
+		CurrentCollisionDistanceFromPivot,
+		FMath::Min(MinDistanceFromPivot, DesiredDistanceFromPivot),
+		DesiredDistanceFromPivot
+	);
+
+	bWasCameraCollisionBlocked = bHit;
+
+	const FVector FinalCameraLocation =
+		PivotLocation + DirectionFromPivot * CurrentCollisionDistanceFromPivot;
+
+	if (bDrawCameraCollisionDebug)
+	{
+		const FColor LineColor = bHit ? FColor::Red : FColor::Green;
+
+		DrawDebugLine(
+			GetWorld(),
+			TraceStart,
+			TraceEnd,
+			LineColor,
+			false,
+			0.0f,
+			0,
+			1.0f
+		);
+
+		DrawDebugSphere(
+			GetWorld(),
+			FinalCameraLocation,
+			CameraCollisionRadius,
+			12,
+			LineColor,
+			false,
+			0.0f
+		);
+
+		if (bHit)
+		{
+			DrawDebugSphere(
+				GetWorld(),
+				Hit.Location,
+				CameraCollisionRadius,
+				12,
+				FColor::Orange,
+				false,
+				0.0f
+			);
+		}
+	}
+
+	return FinalCameraLocation;
+}
+
+void UVoraxiaCameraComponent::ApplyCameraTransform(const float DeltaTime)
 {
 	if (!TargetCamera)
 	{
 		return;
 	}
 
-	const FTransform CameraTransform = CalculateCameraTransform();
+	const FTransform CameraTransform = CalculateCameraTransform(DeltaTime);
 
 	TargetCamera->SetWorldLocationAndRotation(
 		CameraTransform.GetLocation(),

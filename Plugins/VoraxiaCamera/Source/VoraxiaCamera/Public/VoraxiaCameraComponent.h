@@ -164,10 +164,10 @@ protected:
 	float InitialPitch = -10.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation")
-	float MinPitch = -80.0f;
+	float MinPitch = -55.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation")
-	float MaxPitch = 60.0f;
+	float MaxPitch = 25.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation")
 	float YawInputSpeed = 180.0f;
@@ -183,6 +183,78 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation", meta=(EditCondition="bEnableRotationLag"))
 	float RotationLagSpeed = 18.0f;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation")
+	float LookInputDeadZone = 0.01f;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision")
+	bool bEnableCameraCollision = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
+	TEnumAsByte<ECollisionChannel> CameraCollisionChannel = ECC_Camera;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
+	float CameraCollisionRadius = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
+	float MinDistanceFromPivot = 80.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
+	float CollisionProbeStartOffset = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
+	float CollisionSafetyPadding = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
+	float CollisionCompressionSpeed = 35.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision", meta=(EditCondition="bEnableCameraCollision"))
+	float CollisionRecoverySpeed = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")
+	bool bDrawCameraCollisionDebug = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Constraints")
+	bool bEnablePitchConstraints = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Constraints", meta=(EditCondition="bEnablePitchConstraints"))
+	float PitchConstraintTolerance = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Follow")
+	bool bEnablePitchMovementFollow = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Follow", meta=(EditCondition="bEnablePitchMovementFollow"))
+	float RestingCameraPitch = -10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Follow", meta=(EditCondition="bEnablePitchMovementFollow"))
+	float PitchFollowSpeed = 3.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Follow", meta=(EditCondition="bEnablePitchMovementFollow"))
+	float PitchFollowTimeThreshold = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Follow", meta=(EditCondition="bEnablePitchMovementFollow"))
+	float PitchFollowAngleThreshold = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Follow", meta=(EditCondition="bEnablePitchMovementFollow"))
+	float PitchFollowMinSpeedThreshold = 50.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Follow")
+	bool bEnableYawMovementFollow = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Follow", meta=(EditCondition="bEnableYawMovementFollow"))
+	float YawFollowSpeed = 2.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Follow", meta=(EditCondition="bEnableYawMovementFollow"))
+	float YawFollowTimeThreshold = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Follow", meta=(EditCondition="bEnableYawMovementFollow"))
+	float YawFollowAngleThreshold = 15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Follow", meta=(EditCondition="bEnableYawMovementFollow"))
+	float YawFollowMinSpeedThreshold = 150.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Follow", meta=(EditCondition="bEnableYawMovementFollow"))
+	bool bYawFollowOnlyForwardMovement = true;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category="Voraxia Camera|Setup")
 	TObjectPtr<UCameraComponent> TargetCamera = nullptr;
@@ -200,14 +272,29 @@ private:
 
 	float PendingYawInput = 0.0f;
 	float PendingPitchInput = 0.0f;
+	
+	float TimeSinceLastYawInput = 999.0f;
+	float TimeSinceLastPitchInput = 999.0f;
+	
+	float CurrentCollisionDistanceFromPivot = -1.0f;
+	bool bWasCameraCollisionBlocked = false;
 
 	void InitializeRuntimeState();
 	void UpdateRuntimeState(float DeltaTime);
 	void UpdateInputRotation(float DeltaTime);
 
 	FVector CalculatePivotLocation() const;
-	FTransform CalculateCameraTransform() const;
+	FTransform CalculateCameraTransform(float DeltaTime);
+	FVector ResolveCameraCollision(const FVector& PivotLocation, const FVector& DesiredCameraLocation, float DeltaTime);
 
-	void ApplyCameraTransform();
+	void ApplyCameraTransform(float DeltaTime);
 	float CalculateFinalFOV() const;
+	
+	void ApplyPitchInputWithConstraints(float PitchInputDelta);
+	bool HasRecentYawInput() const;
+	bool HasRecentPitchInput() const;
+	float GetOwnerMovementSpeed2D() const;
+	float GetOwnerMovementYaw() const;
+	void UpdatePitchFollow(float DeltaTime);
+	void UpdateYawFollow(float DeltaTime);
 };
