@@ -5,6 +5,9 @@
 #include "Camera/CameraComponent.h"
 #include "Curves/CurveFloat.h"
 #include "GameFramework/Actor.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
+#include "Widgets/SVoraxiaCameraDebugPanel.h"
 #include "VoraxiaCameraLog.h"
 
 void FVoraxiaCameraRuntimeFloat::Initialize(const float InValue)
@@ -192,6 +195,18 @@ void UVoraxiaCameraComponent::BeginPlay()
 			*GetNameSafe(GetOwner())
 		);
 	}
+	
+	if (bShowSlateDebugPanel)
+	{
+		CreateSlateDebugPanel();
+	}
+}
+
+void UVoraxiaCameraComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	DestroySlateDebugPanel();
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void UVoraxiaCameraComponent::TickComponent(
@@ -389,6 +404,66 @@ FVector UVoraxiaCameraComponent::GetCurrentPivotOffset() const
 float UVoraxiaCameraComponent::GetCurrentFOV() const
 {
 	return CalculateFinalFOV();
+}
+
+bool UVoraxiaCameraComponent::IsCameraCollisionBlocked() const
+{
+	return bWasCameraCollisionBlocked;
+}
+
+float UVoraxiaCameraComponent::GetDesiredDistanceFromPivot() const
+{
+	return LastDesiredDistanceFromPivot;
+}
+
+float UVoraxiaCameraComponent::GetEffectiveDistanceFromPivot() const
+{
+	return LastEffectiveDistanceFromPivot;
+}
+
+float UVoraxiaCameraComponent::GetCurrentCollisionDistanceFromPivot() const
+{
+	return FMath::Max(0.0f, CurrentCollisionDistanceFromPivot);
+}
+
+FVector UVoraxiaCameraComponent::GetLastPivotLocation() const
+{
+	return LastPivotLocation;
+}
+
+FVector UVoraxiaCameraComponent::GetLastDesiredCameraLocation() const
+{
+	return LastDesiredCameraLocation;
+}
+
+FVector UVoraxiaCameraComponent::GetLastFinalCameraLocation() const
+{
+	return LastFinalCameraLocation;
+}
+
+FRotator UVoraxiaCameraComponent::GetDesiredCameraRotation() const
+{
+	return DesiredRotation;
+}
+
+FRotator UVoraxiaCameraComponent::GetSmoothedCameraRotation() const
+{
+	return SmoothedRotation;
+}
+
+FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
+{
+	return FString::Printf(
+		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | Collision: %s | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | FOV: %.1f"),
+		LastDesiredDistanceFromPivot,
+		LastEffectiveDistanceFromPivot,
+		bWasCameraCollisionBlocked ? TEXT("Blocked") : TEXT("Clear"),
+		DesiredRotation.Pitch,
+		DesiredRotation.Yaw,
+		SmoothedRotation.Pitch,
+		SmoothedRotation.Yaw,
+		CalculateFinalFOV()
+	);
 }
 
 void UVoraxiaCameraComponent::InitializeRuntimeState()
@@ -708,6 +783,18 @@ FTransform UVoraxiaCameraComponent::CalculateCameraTransform(const float DeltaTi
 		DeltaTime
 	);
 
+	LastPivotLocation = PivotLocation;
+	LastDesiredCameraLocation = DesiredCameraLocation;
+	LastFinalCameraLocation = FinalCameraLocation;
+
+	LastDesiredDistanceFromPivot = FVector::Dist(PivotLocation, DesiredCameraLocation);
+	LastEffectiveDistanceFromPivot = FVector::Dist(PivotLocation, FinalCameraLocation);
+
+	if (bDrawCameraStateDebug)
+	{
+		DrawCameraStateDebug();
+	}
+
 	return FTransform(SmoothedRotation, FinalCameraLocation);
 }
 
@@ -1021,6 +1108,146 @@ void UVoraxiaCameraComponent::ApplyCameraTransform(const float DeltaTime)
 	);
 
 	TargetCamera->SetFieldOfView(CalculateFinalFOV());
+}
+
+void UVoraxiaCameraComponent::DrawCameraStateDebug() const
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	DrawDebugSphere(
+		GetWorld(),
+		LastPivotLocation,
+		10.0f,
+		12,
+		FColor::Blue,
+		false,
+		0.0f
+	);
+
+	DrawDebugSphere(
+		GetWorld(),
+		LastDesiredCameraLocation,
+		10.0f,
+		12,
+		FColor::Cyan,
+		false,
+		0.0f
+	);
+
+	DrawDebugSphere(
+		GetWorld(),
+		LastFinalCameraLocation,
+		12.0f,
+		12,
+		bWasCameraCollisionBlocked ? FColor::Red : FColor::Green,
+		false,
+		0.0f
+	);
+
+	DrawDebugLine(
+		GetWorld(),
+		LastPivotLocation,
+		LastDesiredCameraLocation,
+		FColor::Cyan,
+		false,
+		0.0f,
+		0,
+		0.75f
+	);
+
+	DrawDebugLine(
+		GetWorld(),
+		LastPivotLocation,
+		LastFinalCameraLocation,
+		bWasCameraCollisionBlocked ? FColor::Red : FColor::Green,
+		false,
+		0.0f,
+		0,
+		1.5f
+	);
+
+	DrawDebugCoordinateSystem(
+		GetWorld(),
+		LastPivotLocation,
+		SmoothedRotation,
+		40.0f,
+		false,
+		0.0f,
+		0,
+		1.0f
+	);
+}
+
+void UVoraxiaCameraComponent::SetSlateDebugPanelVisible(const bool bVisible)
+{
+	bShowSlateDebugPanel = bVisible;
+
+	if (bShowSlateDebugPanel)
+	{
+		CreateSlateDebugPanel();
+	}
+	else
+	{
+		DestroySlateDebugPanel();
+	}
+}
+
+void UVoraxiaCameraComponent::ToggleSlateDebugPanel()
+{
+	SetSlateDebugPanelVisible(!IsSlateDebugPanelVisible());
+}
+
+bool UVoraxiaCameraComponent::IsSlateDebugPanelVisible() const
+{
+	return SlateDebugPanelWidget.IsValid();
+}
+
+void UVoraxiaCameraComponent::CreateSlateDebugPanel()
+{
+	if (SlateDebugPanelWidget.IsValid())
+	{
+		return;
+	}
+
+	if (!GEngine || !GEngine->GameViewport)
+	{
+		return;
+	}
+
+	TSharedRef<SWidget> PanelWidget =
+		SNew(SHorizontalBox)
+
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.HAlign(HAlign_Left)
+		.VAlign(VAlign_Fill)
+		[
+			SNew(SVoraxiaCameraDebugPanel)
+			.CameraComponent(TWeakObjectPtr<UVoraxiaCameraComponent>(this))
+			.PanelWidth(SlateDebugPanelWidth)
+		];
+
+	SlateDebugPanelWidget = PanelWidget;
+
+	GEngine->GameViewport->AddViewportWidgetContent(
+		PanelWidget,
+		SlateDebugPanelZOrder
+	);
+}
+
+void UVoraxiaCameraComponent::DestroySlateDebugPanel()
+{
+	if (SlateDebugPanelWidget.IsValid() && GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->RemoveViewportWidgetContent(
+			SlateDebugPanelWidget.ToSharedRef()
+		);
+	}
+
+	SlateDebugPanelWidget.Reset();
 }
 
 float UVoraxiaCameraComponent::CalculateFinalFOV() const

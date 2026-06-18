@@ -48,12 +48,16 @@ public:
 	UVoraxiaCameraComponent();
 
 	virtual void BeginPlay() override;
-
+	
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	
 	virtual void TickComponent(
 		float DeltaTime,
 		ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction
 	) override;
+	
+
 
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Setup")
 	void SetTargetCamera(UCameraComponent* InTargetCamera);
@@ -128,6 +132,45 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Framing")
 	float GetCurrentFOV() const;
+	
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	bool IsCameraCollisionBlocked() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	float GetDesiredDistanceFromPivot() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	float GetEffectiveDistanceFromPivot() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	float GetCurrentCollisionDistanceFromPivot() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	FVector GetLastPivotLocation() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	FVector GetLastDesiredCameraLocation() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	FVector GetLastFinalCameraLocation() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	FRotator GetDesiredCameraRotation() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	FRotator GetSmoothedCameraRotation() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	FString GetCameraDebugSummary() const;
+	
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Debug")
+	void SetSlateDebugPanelVisible(bool bVisible);
+
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Debug")
+	void ToggleSlateDebugPanel();
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Debug")
+	bool IsSlateDebugPanelVisible() const;
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Setup")
@@ -225,6 +268,18 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")
 	bool bDrawCameraCollisionDebug = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")
+	bool bDrawCameraStateDebug = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug|Slate")
+	bool bShowSlateDebugPanel = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug|Slate", meta=(EditCondition="bShowSlateDebugPanel"))
+	float SlateDebugPanelWidth = 380.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug|Slate", meta=(EditCondition="bShowSlateDebugPanel"))
+	int32 SlateDebugPanelZOrder = 50;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Pitch Constraints")
 	bool bEnablePitchConstraints = true;
@@ -290,6 +345,15 @@ private:
 	
 	float CurrentCollisionDistanceFromPivot = -1.0f;
 	bool bWasCameraCollisionBlocked = false;
+	
+	float LastDesiredDistanceFromPivot = 0.0f;
+	float LastEffectiveDistanceFromPivot = 0.0f;
+	
+	TSharedPtr<SWidget> SlateDebugPanelWidget;
+
+	FVector LastPivotLocation = FVector::ZeroVector;
+	FVector LastDesiredCameraLocation = FVector::ZeroVector;
+	FVector LastFinalCameraLocation = FVector::ZeroVector;
 
 	void InitializeRuntimeState();
 	void UpdateRuntimeState(float DeltaTime);
@@ -307,7 +371,7 @@ private:
 	float& OutSafeDistanceFromPivot,
 	FHitResult& OutHit
 	) const;
-
+	
 	void ApplyCameraTransform(float DeltaTime);
 	float CalculateFinalFOV() const;
 	
@@ -318,4 +382,7 @@ private:
 	float GetOwnerMovementYaw() const;
 	void UpdatePitchFollow(float DeltaTime);
 	void UpdateYawFollow(float DeltaTime);
+	void DrawCameraStateDebug() const;
+	void CreateSlateDebugPanel();
+	void DestroySlateDebugPanel();
 };

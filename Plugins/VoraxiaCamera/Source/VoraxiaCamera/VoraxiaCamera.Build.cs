@@ -31,6 +31,8 @@ public class VoraxiaCamera : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"Slate",
+				"SlateCore",
 			}
 			);
 		
