@@ -13,6 +13,8 @@
 #include "Widgets/SBoxPanel.h"
 #include "Components/SceneComponent.h"
 #include "Widgets/SVoraxiaCameraDebugPanel.h"
+#include "Interfaces/VoraxiaFocusableInterface.h"
+#include "Interfaces/VoraxiaScannableInterface.h"
 #include "VoraxiaCameraLog.h"
 
 void FVoraxiaCameraRuntimeFloat::Initialize(const float InValue)
@@ -470,7 +472,6 @@ void UVoraxiaCameraComponent::SetFocusWorldLocation(
 }
 
 
-
 void UVoraxiaCameraComponent::ClearFocus(const float BlendTime)
 {
 	FVector CurrentFocusLocation;
@@ -641,8 +642,13 @@ FRotator UVoraxiaCameraComponent::GetSmoothedCameraRotation() const
 
 FString UVoraxiaCameraComponent::GetCurrentFocusTargetName() const
 {
-	if (const AActor* Actor = FocusTargetActor.Get())
+	if (AActor* Actor = FocusTargetActor.Get())
 	{
+		if (Actor->GetClass()->ImplementsInterface(UVoraxiaFocusableInterface::StaticClass()))
+		{
+			return IVoraxiaFocusableInterface::Execute_GetFocusDisplayName(Actor).ToString();
+		}
+
 		return Actor->GetName();
 	}
 
@@ -664,10 +670,54 @@ FString UVoraxiaCameraComponent::GetCurrentFocusTargetName() const
 	return TEXT("None");
 }
 
+bool UVoraxiaCameraComponent::IsCurrentFocusTargetScannable() const
+{
+	AActor* Actor = FocusTargetActor.Get();
+
+	if (!Actor)
+	{
+		return false;
+	}
+
+	if (!Actor->GetClass()->ImplementsInterface(UVoraxiaScannableInterface::StaticClass()))
+	{
+		return false;
+	}
+
+	return IVoraxiaScannableInterface::Execute_CanBeScanned(
+		Actor,
+		GetOwner()
+	);
+}
+
+FText UVoraxiaCameraComponent::GetCurrentFocusScanDisplayName() const
+{
+	AActor* Actor = FocusTargetActor.Get();
+
+	if (!Actor || !Actor->GetClass()->ImplementsInterface(UVoraxiaScannableInterface::StaticClass()))
+	{
+		return FText::FromString(TEXT("None"));
+	}
+
+	return IVoraxiaScannableInterface::Execute_GetScanDisplayName(Actor);
+}
+
+FText UVoraxiaCameraComponent::GetCurrentFocusScanSummary() const
+{
+	AActor* Actor = FocusTargetActor.Get();
+
+	if (!Actor || !Actor->GetClass()->ImplementsInterface(UVoraxiaScannableInterface::StaticClass()))
+	{
+		return FText::FromString(TEXT("-"));
+	}
+
+	return IVoraxiaScannableInterface::Execute_GetScanSummary(Actor);
+}
+
 FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
 {
 	return FString::Printf(
-		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | DynDist: %.1f | Collision: %s | Focus: %s %.2f '%s' | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | DynFOV: %.1f | FOV: %.1f"),
+		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | DynDist: %.1f | Collision: %s | Focus: %s %.2f '%s' | Scan: %s | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | DynFOV: %.1f | FOV: %.1f"),
 		LastDesiredDistanceFromPivot,
 		LastEffectiveDistanceFromPivot,
 		GetCurrentDynamicDistanceOffset(),
@@ -675,6 +725,7 @@ FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
 		IsFocusActive() ? TEXT("Active") : TEXT("None"),
 		FocusAlpha,
 		*GetCurrentFocusTargetName(),
+		IsCurrentFocusTargetScannable() ? TEXT("Yes") : TEXT("No"),
 		DesiredRotation.Pitch,
 		DesiredRotation.Yaw,
 		SmoothedRotation.Pitch,
@@ -1009,7 +1060,19 @@ void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
 			continue;
 		}
 
-		const FVector ToActor = Actor->GetActorLocation() - SearchOrigin;
+		FVector FocusLocation = Actor->GetActorLocation();
+
+		if (Actor->GetClass()->ImplementsInterface(UVoraxiaFocusableInterface::StaticClass()))
+		{
+			if (!IVoraxiaFocusableInterface::Execute_CanBeFocused(Actor, Owner))
+			{
+				continue;
+			}
+
+			FocusLocation = IVoraxiaFocusableInterface::Execute_GetFocusLocation(Actor, Owner);
+		}
+
+		const FVector ToActor = FocusLocation - SearchOrigin;
 		const float DistanceSquared = ToActor.SizeSquared();
 
 		if (DistanceSquared > MaxDistanceSquared)
@@ -1236,7 +1299,7 @@ bool UVoraxiaCameraComponent::TryGetFocusLocation(FVector& OutFocusLocation) con
 			return true;
 		}
 
-		if (const AActor* Actor = FocusTargetActor.Get())
+		if (AActor* Actor = FocusTargetActor.Get())
 		{
 			if (const USceneComponent* RootComponent = Actor->GetRootComponent())
 			{
@@ -1245,6 +1308,16 @@ bool UVoraxiaCameraComponent::TryGetFocusLocation(FVector& OutFocusLocation) con
 					OutFocusLocation = RootComponent->GetSocketLocation(FocusTargetSocketName);
 					return true;
 				}
+			}
+
+			if (Actor->GetClass()->ImplementsInterface(UVoraxiaFocusableInterface::StaticClass()))
+			{
+				OutFocusLocation = IVoraxiaFocusableInterface::Execute_GetFocusLocation(
+					Actor,
+					GetOwner()
+				);
+
+				return true;
 			}
 
 			OutFocusLocation = Actor->GetActorLocation();
