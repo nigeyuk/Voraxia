@@ -126,6 +126,60 @@ void SVoraxiaCameraDebugPanel::Construct(const FArguments& InArgs)
 					]
 
 
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 8.0f, 0.0f, 4.0f)
+					[
+						MakeHeading(FText::FromString(TEXT("Scan")))
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Scannable")),
+							TAttribute<FText>::CreateLambda([this]() { return GetScanScannableText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Name")),
+							TAttribute<FText>::CreateLambda([this]() { return GetScanNameText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Time")),
+							TAttribute<FText>::CreateLambda([this]() { return GetScanTimeText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Summary")),
+							TAttribute<FText>::CreateLambda([this]() { return GetScanSummaryText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Composition")),
+							TAttribute<FText>::CreateLambda([this]() { return GetScanCompositionText(); })
+						)
+					]
+
+
 					+ SVerticalBox::Slot()
 					.AutoHeight()
 					.Padding(0.0f, 8.0f, 0.0f, 4.0f)
@@ -369,6 +423,72 @@ FText SVoraxiaCameraDebugPanel::GetFocusLocationText() const
 	return FText::FromString(Component->GetCurrentFocusLocation().ToCompactString());
 }
 
+
+
+FText SVoraxiaCameraDebugPanel::GetScanScannableText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component)
+	{
+		return FText::FromString(TEXT("No Component"));
+	}
+
+	return Component->IsCurrentFocusTargetScannable()
+		? FText::FromString(TEXT("Yes"))
+		: FText::FromString(TEXT("No"));
+}
+
+FText SVoraxiaCameraDebugPanel::GetScanNameText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component || !Component->IsCurrentFocusTargetScannable())
+	{
+		return FText::FromString(TEXT("-"));
+	}
+
+	return Component->GetCurrentFocusScanDisplayName();
+}
+
+FText SVoraxiaCameraDebugPanel::GetScanTimeText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component || !Component->IsCurrentFocusTargetScannable())
+	{
+		return FText::FromString(TEXT("-"));
+	}
+
+	return FText::FromString(FString::Printf(
+		TEXT("%.2fs"),
+		Component->GetCurrentFocusScanTimeSeconds()
+	));
+}
+
+FText SVoraxiaCameraDebugPanel::GetScanSummaryText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component || !Component->IsCurrentFocusTargetScannable())
+	{
+		return FText::FromString(TEXT("-"));
+	}
+
+	return Component->GetCurrentFocusScanSummary();
+}
+
+FText SVoraxiaCameraDebugPanel::GetScanCompositionText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component || !Component->IsCurrentFocusTargetScannable())
+	{
+		return FText::FromString(TEXT("-"));
+	}
+
+	return FText::FromString(Component->GetCurrentFocusScanCompositionSummary());
+}
 
 FText SVoraxiaCameraDebugPanel::GetDesiredDistanceText() const
 {

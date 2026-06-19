@@ -716,6 +716,59 @@ FText UVoraxiaCameraComponent::GetCurrentFocusScanSummary() const
 	return IVoraxiaScannableInterface::Execute_GetScanSummary(Actor);
 }
 
+float UVoraxiaCameraComponent::GetCurrentFocusScanTimeSeconds() const
+{
+	AActor* Actor = FocusTargetActor.Get();
+
+	if (!Actor || !Actor->GetClass()->ImplementsInterface(UVoraxiaScannableInterface::StaticClass()))
+	{
+		return 0.0f;
+	}
+
+	return IVoraxiaScannableInterface::Execute_GetScanTimeSeconds(Actor);
+}
+
+FString UVoraxiaCameraComponent::GetCurrentFocusScanCompositionSummary() const
+{
+	AActor* Actor = FocusTargetActor.Get();
+
+	if (!Actor || !Actor->GetClass()->ImplementsInterface(UVoraxiaScannableInterface::StaticClass()))
+	{
+		return TEXT("-");
+	}
+
+	const TArray<FVoraxiaScanCompositionEntry> Composition =
+		IVoraxiaScannableInterface::Execute_GetScanComposition(Actor);
+
+	if (Composition.Num() <= 0)
+	{
+		return TEXT("No composition entries.");
+	}
+
+	TArray<FString> Lines;
+	Lines.Reserve(Composition.Num());
+
+	for (const FVoraxiaScanCompositionEntry& Entry : Composition)
+	{
+		const FString MaterialIdString = Entry.MaterialId.ToString();
+		const FString DisplayNameString = Entry.DisplayName.ToString();
+
+		const FString DisplayName =
+			DisplayNameString.IsEmpty()
+				? MaterialIdString
+				: DisplayNameString;
+
+		Lines.Add(FString::Printf(
+			TEXT("%s [%s]: %.1f%%"),
+			*DisplayName,
+			*MaterialIdString,
+			Entry.Percentage
+		));
+	}
+
+	return FString::Join(Lines, TEXT("\n"));
+}
+
 void UVoraxiaCameraComponent::LogScannableFocusTarget(AActor* Actor) const
 {
 	if (!Actor)

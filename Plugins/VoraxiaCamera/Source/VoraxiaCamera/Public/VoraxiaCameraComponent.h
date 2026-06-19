@@ -165,6 +165,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Scan")
 	FText GetCurrentFocusScanSummary() const;
 	
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Scan")
+	float GetCurrentFocusScanTimeSeconds() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Scan")
+	FString GetCurrentFocusScanCompositionSummary() const;
+	
 	/** Finds the first actor with DefaultFocusActorTag and focuses it. */
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Focus")
 	void FocusDefaultTaggedActor(float BlendTime = -1.0f);

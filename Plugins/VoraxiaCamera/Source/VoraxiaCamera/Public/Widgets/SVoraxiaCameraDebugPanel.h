@@ -37,6 +37,11 @@ private:
 	FText GetFocusAlphaText() const;
 	FText GetFocusTargetText() const;
 	FText GetFocusLocationText() const;
+	FText GetScanScannableText() const;
+	FText GetScanNameText() const;
+	FText GetScanTimeText() const;
+	FText GetScanSummaryText() const;
+	FText GetScanCompositionText() const;
 	FText GetDesiredDistanceText() const;
 	FText GetEffectiveDistanceText() const;
 	FText GetCollisionDistanceText() const;
