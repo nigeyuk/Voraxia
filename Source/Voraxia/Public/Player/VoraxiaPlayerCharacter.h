@@ -1,3 +1,5 @@
+// Copyright 2026 Coding Custard Studios.
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -46,11 +48,36 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> JumpAction;
 	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputAction> SprintAction;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputAction> FocusAction;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement")
 	bool bCharacterFacesCameraYaw = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement", meta=(EditCondition="bCharacterFacesCameraYaw"))
 	float FaceCameraYawInterpSpeed = 16.0f;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement|Sprint")
+	float WalkSpeed = 500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement|Sprint")
+	float SprintSpeed = 850.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement|Sprint")
+	float SprintSpeedInterpSpeed = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement|Sprint")
+	bool bCanSprint = true;
+	
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Camera|Focus")
+	float FocusBlendInTime = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Camera|Focus")
+	float FocusBlendOutTime = 0.25f;
 
 private:
 	void AddDefaultMappingContext();
@@ -60,5 +87,12 @@ private:
 	void Look(const FInputActionValue& Value);
 	
 	void UpdateCharacterFacing(float DeltaTime);
+	void SprintStarted(const FInputActionValue& Value);
+	void SprintEnded(const FInputActionValue& Value);
+	void UpdateSprintSpeed(float DeltaTime);
 	
+	bool bWantsToSprint = false;
+	
+	void FocusStarted(const FInputActionValue& Value);
+	void FocusEnded(const FInputActionValue& Value);
 };

@@ -1,3 +1,5 @@
+// Copyright 2026 Coding Custard Studios.
+
 #include "Player/VoraxiaPlayerCharacter.h"
 
 #include "Camera/CameraComponent.h"
@@ -24,7 +26,7 @@ AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
 		MovementComponent->bOrientRotationToMovement = false;
 		MovementComponent->bUseControllerDesiredRotation = false;
 		MovementComponent->RotationRate = FRotator(0.0f, 540.0f, 0.0f);
-		MovementComponent->MaxWalkSpeed = 500.0f;
+		MovementComponent->MaxWalkSpeed = WalkSpeed;
 		MovementComponent->JumpZVelocity = 500.0f;
 		MovementComponent->AirControl = 0.35f;
 	}
@@ -39,7 +41,8 @@ AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
 void AVoraxiaPlayerCharacter::Tick(const float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
+	
+	UpdateSprintSpeed(DeltaTime);
 	UpdateCharacterFacing(DeltaTime);
 }
 
@@ -88,6 +91,7 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 
 	if (!EnhancedInputComponent)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia player input component is not an Enhanced Input Component."));
 		return;
 	}
 
@@ -100,6 +104,10 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 			&AVoraxiaPlayerCharacter::Move
 		);
 	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia MoveAction is not assigned."));
+	}
 
 	if (LookAction)
 	{
@@ -109,6 +117,10 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 			this,
 			&AVoraxiaPlayerCharacter::Look
 		);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia LookAction is not assigned."));
 	}
 
 	if (JumpAction)
@@ -126,6 +138,66 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 			this,
 			&ACharacter::StopJumping
 		);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia JumpAction is not assigned."));
+	}
+
+	if (SprintAction)
+	{
+		EnhancedInputComponent->BindAction(
+			SprintAction,
+			ETriggerEvent::Started,
+			this,
+			&AVoraxiaPlayerCharacter::SprintStarted
+		);
+
+		EnhancedInputComponent->BindAction(
+			SprintAction,
+			ETriggerEvent::Completed,
+			this,
+			&AVoraxiaPlayerCharacter::SprintEnded
+		);
+
+		EnhancedInputComponent->BindAction(
+			SprintAction,
+			ETriggerEvent::Canceled,
+			this,
+			&AVoraxiaPlayerCharacter::SprintEnded
+		);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia SprintAction is not assigned."));
+	}
+
+	if (FocusAction)
+	{
+		EnhancedInputComponent->BindAction(
+			FocusAction,
+			ETriggerEvent::Started,
+			this,
+			&AVoraxiaPlayerCharacter::FocusStarted
+		);
+
+		EnhancedInputComponent->BindAction(
+			FocusAction,
+			ETriggerEvent::Completed,
+			this,
+			&AVoraxiaPlayerCharacter::FocusEnded
+		);
+
+		EnhancedInputComponent->BindAction(
+			FocusAction,
+			ETriggerEvent::Canceled,
+			this,
+			&AVoraxiaPlayerCharacter::FocusEnded
+		);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia FocusAction is not assigned."));
 	}
 }
 
@@ -192,3 +264,72 @@ void AVoraxiaPlayerCharacter::Look(const FInputActionValue& Value)
 	VoraxiaCameraComponent->AddYawInput(LookValue.X);
 	VoraxiaCameraComponent->AddPitchInput(LookValue.Y);
 }
+
+void AVoraxiaPlayerCharacter::SprintStarted(const FInputActionValue& Value)
+{
+	if (!bCanSprint)
+	{
+		return;
+	}
+
+	bWantsToSprint = true;
+}
+
+void AVoraxiaPlayerCharacter::SprintEnded(const FInputActionValue& Value)
+{
+	bWantsToSprint = false;
+}
+
+void AVoraxiaPlayerCharacter::UpdateSprintSpeed(const float DeltaTime)
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+
+	if (!MovementComponent)
+	{
+		return;
+	}
+
+	const float TargetSpeed = bWantsToSprint && bCanSprint
+		? SprintSpeed
+		: WalkSpeed;
+
+	if (SprintSpeedInterpSpeed <= KINDA_SMALL_NUMBER || DeltaTime <= KINDA_SMALL_NUMBER)
+	{
+		MovementComponent->MaxWalkSpeed = TargetSpeed;
+		return;
+	}
+
+	MovementComponent->MaxWalkSpeed = FMath::FInterpTo(
+		MovementComponent->MaxWalkSpeed,
+		TargetSpeed,
+		DeltaTime,
+		SprintSpeedInterpSpeed
+	);
+}
+
+void AVoraxiaPlayerCharacter::FocusStarted(const FInputActionValue& Value)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Voraxia FocusStarted fired."));
+
+	if (!VoraxiaCameraComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("VoraxiaCameraComponent is null."));
+		return;
+	}
+
+	VoraxiaCameraComponent->FocusDefaultTaggedActor(FocusBlendInTime);
+}
+
+void AVoraxiaPlayerCharacter::FocusEnded(const FInputActionValue& Value)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Voraxia FocusEnded fired."));
+
+	if (!VoraxiaCameraComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("VoraxiaCameraComponent is null when clearing focus."));
+		return;
+	}
+
+	VoraxiaCameraComponent->ClearFocus(FocusBlendOutTime);
+}
+

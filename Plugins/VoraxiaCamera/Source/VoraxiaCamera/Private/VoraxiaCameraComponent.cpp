@@ -1,5 +1,8 @@
+// Copyright 2026 Coding Custard Studios.
+
 #include "VoraxiaCameraComponent.h"
 
+#include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "Camera/CameraComponent.h"
@@ -7,6 +10,8 @@
 #include "GameFramework/Actor.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "Widgets/SBoxPanel.h"
+#include "Components/SceneComponent.h"
 #include "Widgets/SVoraxiaCameraDebugPanel.h"
 #include "VoraxiaCameraLog.h"
 
@@ -174,6 +179,7 @@ void UVoraxiaCameraComponent::BeginPlay()
 	);
 
 	SmoothedRotation = DesiredRotation;
+	UnfocusedDesiredRotation = DesiredRotation;
 
 	if (TargetCamera)
 	{
@@ -224,6 +230,8 @@ void UVoraxiaCameraComponent::TickComponent(
 
 	UpdateRuntimeState(DeltaTime);
 	UpdateInputRotation(DeltaTime);
+	UpdateDynamicModifiers(DeltaTime);
+	UpdateMovementAnticipation(DeltaTime);
 	ApplyCameraTransform(DeltaTime);
 }
 
@@ -381,6 +389,163 @@ void UVoraxiaCameraComponent::SwapCameraShoulder(
 	RuntimeCameraOffset.Set(NewRuntimeCameraOffset, BlendTime, BlendCurve);
 }
 
+void UVoraxiaCameraComponent::SetFocusActor(
+	AActor* NewFocusActor,
+	const float BlendTime,
+	const FName SocketName
+)
+{
+	if (!bEnableFocusSystem || !NewFocusActor)
+	{
+		ClearFocus(BlendTime);
+		return;
+	}
+
+	FocusTargetActor = NewFocusActor;
+	FocusTargetComponent.Reset();
+	FocusTargetSocketName = SocketName;
+
+	bFocusUsesWorldLocation = false;
+	bFocusActive = true;
+	bHasCachedFocusLocation = false;
+
+	BeginFocusBlend(
+		1.0f,
+		BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
+	);
+}
+
+void UVoraxiaCameraComponent::SetFocusComponent(
+	USceneComponent* NewFocusComponent,
+	const float BlendTime,
+	const FName SocketName
+)
+{
+	if (!bEnableFocusSystem || !NewFocusComponent)
+	{
+		ClearFocus(BlendTime);
+		return;
+	}
+
+	FocusTargetActor.Reset();
+	FocusTargetComponent = NewFocusComponent;
+	FocusTargetSocketName = SocketName;
+
+	bFocusUsesWorldLocation = false;
+	bFocusActive = true;
+	bHasCachedFocusLocation = false;
+
+	BeginFocusBlend(
+		1.0f,
+		BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
+	);
+}
+
+void UVoraxiaCameraComponent::SetFocusWorldLocation(
+	const FVector NewFocusWorldLocation,
+	const float BlendTime
+)
+{
+	if (!bEnableFocusSystem)
+	{
+		ClearFocus(BlendTime);
+		return;
+	}
+
+	FocusTargetActor.Reset();
+	FocusTargetComponent.Reset();
+	FocusTargetSocketName = NAME_None;
+
+	FocusWorldLocation = NewFocusWorldLocation;
+	CachedFocusLocation = NewFocusWorldLocation;
+
+	bFocusUsesWorldLocation = true;
+	bFocusActive = true;
+	bHasCachedFocusLocation = true;
+
+	BeginFocusBlend(
+		1.0f,
+		BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
+	);
+}
+
+
+
+void UVoraxiaCameraComponent::ClearFocus(const float BlendTime)
+{
+	FVector CurrentFocusLocation;
+
+	if (TryGetFocusLocation(CurrentFocusLocation))
+	{
+		CachedFocusLocation = CurrentFocusLocation;
+		bHasCachedFocusLocation = true;
+	}
+
+	bFocusActive = false;
+	bFocusUsesWorldLocation = false;
+
+	FocusTargetActor.Reset();
+	FocusTargetComponent.Reset();
+	FocusTargetSocketName = NAME_None;
+
+	BeginFocusBlend(
+		0.0f,
+		BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendOutTime
+	);
+}
+
+bool UVoraxiaCameraComponent::IsFocusActive() const
+{
+	return bFocusActive || FocusAlpha > KINDA_SMALL_NUMBER;
+}
+
+float UVoraxiaCameraComponent::GetCurrentFocusAlpha() const
+{
+	return FocusAlpha;
+}
+
+FVector UVoraxiaCameraComponent::GetCurrentFocusLocation() const
+{
+	FVector CurrentFocusLocation;
+
+	if (TryGetFocusLocation(CurrentFocusLocation))
+	{
+		return CurrentFocusLocation;
+	}
+
+	return FVector::ZeroVector;
+}
+
+float UVoraxiaCameraComponent::GetCurrentPitchDistanceOffset() const
+{
+	return CurrentPitchDistanceOffset;
+}
+
+float UVoraxiaCameraComponent::GetCurrentPitchFOVOffset() const
+{
+	return CurrentPitchFOVOffset;
+}
+
+float UVoraxiaCameraComponent::GetCurrentSpeedDistanceOffset() const
+{
+	return CurrentSpeedDistanceOffset;
+}
+
+float UVoraxiaCameraComponent::GetCurrentSpeedFOVOffset() const
+{
+	return CurrentSpeedFOVOffset;
+}
+
+float UVoraxiaCameraComponent::GetCurrentDynamicDistanceOffset() const
+{
+	return CurrentPitchDistanceOffset + CurrentSpeedDistanceOffset;
+}
+
+float UVoraxiaCameraComponent::GetCurrentDynamicFOVOffset() const
+{
+	return CurrentPitchFOVOffset + CurrentSpeedFOVOffset;
+}
+
 float UVoraxiaCameraComponent::GetCurrentCameraDistance() const
 {
 	return RuntimeCameraDistance.CurrentValue;
@@ -404,6 +569,11 @@ FVector UVoraxiaCameraComponent::GetCurrentPivotOffset() const
 float UVoraxiaCameraComponent::GetCurrentFOV() const
 {
 	return CalculateFinalFOV();
+}
+
+FVector UVoraxiaCameraComponent::GetCurrentMovementAnticipationOffset() const
+{
+	return CurrentMovementAnticipationOffset;
 }
 
 bool UVoraxiaCameraComponent::IsCameraCollisionBlocked() const
@@ -454,14 +624,16 @@ FRotator UVoraxiaCameraComponent::GetSmoothedCameraRotation() const
 FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
 {
 	return FString::Printf(
-		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | Collision: %s | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | FOV: %.1f"),
+		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | DynDist: %.1f | Collision: %s | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | DynFOV: %.1f | FOV: %.1f"),
 		LastDesiredDistanceFromPivot,
 		LastEffectiveDistanceFromPivot,
+		GetCurrentDynamicDistanceOffset(),
 		bWasCameraCollisionBlocked ? TEXT("Blocked") : TEXT("Clear"),
 		DesiredRotation.Pitch,
 		DesiredRotation.Yaw,
 		SmoothedRotation.Pitch,
 		SmoothedRotation.Yaw,
+		GetCurrentDynamicFOVOffset(),
 		CalculateFinalFOV()
 	);
 }
@@ -508,7 +680,9 @@ void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 	{
 		TimeSinceLastPitchInput += DeltaTime;
 	}
-
+	
+	DesiredRotation = UnfocusedDesiredRotation;
+	
 	if (bHasYawInput)
 	{
 		DesiredRotation.Yaw += PendingYawInput * YawInputSpeed * DeltaTime;
@@ -530,6 +704,12 @@ void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 		DesiredRotation.Pitch = FMath::Clamp(DesiredRotation.Pitch, MinPitch, MaxPitch);
 	}
 
+	UnfocusedDesiredRotation = DesiredRotation;
+
+	UpdateFocus(DeltaTime);
+
+	DesiredRotation.Roll = 0.0f;
+
 	if (bEnableRotationLag && RotationLagSpeed > KINDA_SMALL_NUMBER)
 	{
 		SmoothedRotation = FMath::RInterpTo(
@@ -543,7 +723,7 @@ void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 	{
 		SmoothedRotation = DesiredRotation;
 	}
-
+	
 	PendingYawInput = 0.0f;
 	PendingPitchInput = 0.0f;
 }
@@ -728,6 +908,508 @@ void UVoraxiaCameraComponent::UpdateYawFollow(const float DeltaTime)
 	);
 }
 
+void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
+{
+	if (!bEnableFocusSystem)
+	{
+		return;
+	}
+
+	if (DefaultFocusActorTag.IsNone())
+	{
+		UE_LOG(
+			LogVoraxiaCamera,
+			Warning,
+			TEXT("Voraxia camera has no DefaultFocusActorTag assigned.")
+		);
+
+		return;
+	}
+
+	UWorld* World = GetWorld();
+
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
+	{
+		AActor* Actor = *ActorIt;
+
+		if (!Actor || Actor == GetOwner())
+		{
+			continue;
+		}
+
+		if (!Actor->ActorHasTag(DefaultFocusActorTag))
+		{
+			continue;
+		}
+
+		SetFocusActor(
+			Actor,
+			BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
+		);
+
+		UE_LOG(
+			LogVoraxiaCamera,
+			Log,
+			TEXT("Voraxia camera focusing tagged actor '%s' with tag '%s'."),
+			*GetNameSafe(Actor),
+			*DefaultFocusActorTag.ToString()
+		);
+
+		return;
+	}
+
+	UE_LOG(
+		LogVoraxiaCamera,
+		Warning,
+		TEXT("Voraxia camera could not find an actor with tag '%s'."),
+		*DefaultFocusActorTag.ToString()
+	);
+}
+
+void UVoraxiaCameraComponent::UpdateFocus(const float DeltaTime)
+{
+	if (!bEnableFocusSystem)
+	{
+		FocusAlpha = 0.0f;
+		ResetFocusTarget();
+		return;
+	}
+
+	if (FocusBlendTime <= KINDA_SMALL_NUMBER)
+	{
+		FocusAlpha = FocusBlendTargetAlpha;
+	}
+	else
+	{
+		FocusBlendElapsed += DeltaTime;
+
+		const float RawAlpha = FMath::Clamp(
+			FocusBlendElapsed / FocusBlendTime,
+			0.0f,
+			1.0f
+		);
+
+		const float SmoothAlpha = RawAlpha * RawAlpha * (3.0f - 2.0f * RawAlpha);
+
+		FocusAlpha = FMath::Lerp(
+			FocusBlendStartAlpha,
+			FocusBlendTargetAlpha,
+			SmoothAlpha
+		);
+
+		if (RawAlpha >= 1.0f)
+		{
+			FocusAlpha = FocusBlendTargetAlpha;
+			FocusBlendTime = 0.0f;
+			FocusBlendElapsed = 0.0f;
+		}
+	}
+
+	if (!IsFocusActive())
+	{
+		ResetFocusTarget();
+		return;
+	}
+
+	FVector FocusLocation;
+
+	if (!TryGetFocusLocation(FocusLocation))
+	{
+		ClearFocus(DefaultFocusBlendOutTime);
+		return;
+	}
+
+	CachedFocusLocation = FocusLocation;
+	bHasCachedFocusLocation = true;
+
+	if (FocusAlpha <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	const FVector PivotLocation = CalculatePivotLocation();
+	const FVector ToFocus = FocusLocation - PivotLocation;
+
+	if (ToFocus.SizeSquared() < FMath::Square(FocusMinimumTargetDistance))
+	{
+		return;
+	}
+
+	FRotator TargetFocusRotation = ToFocus.Rotation();
+	TargetFocusRotation.Roll = 0.0f;
+
+	if (bClampFocusPitchToCameraLimits)
+	{
+		TargetFocusRotation.Pitch = FMath::Clamp(
+			TargetFocusRotation.Pitch,
+			MinPitch,
+			MaxPitch
+		);
+	}
+
+	const float YawDelta = FMath::FindDeltaAngleDegrees(
+		DesiredRotation.Yaw,
+		TargetFocusRotation.Yaw
+	);
+
+	DesiredRotation.Yaw += YawDelta * FocusAlpha;
+
+	DesiredRotation.Pitch = FMath::Lerp(
+		DesiredRotation.Pitch,
+		TargetFocusRotation.Pitch,
+		FocusAlpha
+	);
+}
+
+void UVoraxiaCameraComponent::BeginFocusBlend(
+	const float TargetAlpha,
+	const float BlendTime
+)
+{
+	FocusBlendStartAlpha = FocusAlpha;
+	FocusBlendTargetAlpha = FMath::Clamp(TargetAlpha, 0.0f, 1.0f);
+	FocusBlendTime = FMath::Max(0.0f, BlendTime);
+	FocusBlendElapsed = 0.0f;
+
+	if (FocusBlendTime <= KINDA_SMALL_NUMBER)
+	{
+		FocusAlpha = FocusBlendTargetAlpha;
+	}
+}
+
+bool UVoraxiaCameraComponent::TryGetFocusLocation(FVector& OutFocusLocation) const
+{
+	if (bFocusActive)
+	{
+		if (const USceneComponent* Component = FocusTargetComponent.Get())
+		{
+			if (FocusTargetSocketName != NAME_None && Component->DoesSocketExist(FocusTargetSocketName))
+			{
+				OutFocusLocation = Component->GetSocketLocation(FocusTargetSocketName);
+				return true;
+			}
+
+			OutFocusLocation = Component->GetComponentLocation();
+			return true;
+		}
+
+		if (const AActor* Actor = FocusTargetActor.Get())
+		{
+			if (const USceneComponent* RootComponent = Actor->GetRootComponent())
+			{
+				if (FocusTargetSocketName != NAME_None && RootComponent->DoesSocketExist(FocusTargetSocketName))
+				{
+					OutFocusLocation = RootComponent->GetSocketLocation(FocusTargetSocketName);
+					return true;
+				}
+			}
+
+			OutFocusLocation = Actor->GetActorLocation();
+			return true;
+		}
+
+		if (bFocusUsesWorldLocation)
+		{
+			OutFocusLocation = FocusWorldLocation;
+			return true;
+		}
+	}
+
+	if (FocusAlpha > KINDA_SMALL_NUMBER && bHasCachedFocusLocation)
+	{
+		OutFocusLocation = CachedFocusLocation;
+		return true;
+	}
+
+	return false;
+}
+
+void UVoraxiaCameraComponent::ResetFocusTarget()
+{
+	if (FocusAlpha > KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	FocusTargetActor.Reset();
+	FocusTargetComponent.Reset();
+
+	FocusTargetSocketName = NAME_None;
+
+	FocusWorldLocation = FVector::ZeroVector;
+	CachedFocusLocation = FVector::ZeroVector;
+
+	bFocusUsesWorldLocation = false;
+	bFocusActive = false;
+	bHasCachedFocusLocation = false;
+
+	FocusBlendStartAlpha = 0.0f;
+	FocusBlendTargetAlpha = 0.0f;
+	FocusBlendTime = 0.0f;
+	FocusBlendElapsed = 0.0f;
+}
+
+void UVoraxiaCameraComponent::UpdateDynamicModifiers(const float DeltaTime)
+{
+	const float TargetPitchDistanceOffset = CalculatePitchDistanceOffsetTarget();
+	const float TargetPitchFOVOffset = CalculatePitchFOVOffsetTarget();
+
+	const float TargetSpeedDistanceOffset = CalculateSpeedDistanceOffsetTarget();
+	const float TargetSpeedFOVOffset = CalculateSpeedFOVOffsetTarget();
+
+	const float SafePitchInterpSpeed = FMath::Max(0.0f, PitchModifierInterpSpeed);
+	const float SafeSpeedInterpSpeed = FMath::Max(0.0f, SpeedModifierInterpSpeed);
+
+	if (SafePitchInterpSpeed <= KINDA_SMALL_NUMBER)
+	{
+		CurrentPitchDistanceOffset = TargetPitchDistanceOffset;
+		CurrentPitchFOVOffset = TargetPitchFOVOffset;
+	}
+	else
+	{
+		CurrentPitchDistanceOffset = FMath::FInterpTo(
+			CurrentPitchDistanceOffset,
+			TargetPitchDistanceOffset,
+			DeltaTime,
+			SafePitchInterpSpeed
+		);
+
+		CurrentPitchFOVOffset = FMath::FInterpTo(
+			CurrentPitchFOVOffset,
+			TargetPitchFOVOffset,
+			DeltaTime,
+			SafePitchInterpSpeed
+		);
+	}
+
+	if (SafeSpeedInterpSpeed <= KINDA_SMALL_NUMBER)
+	{
+		CurrentSpeedDistanceOffset = TargetSpeedDistanceOffset;
+		CurrentSpeedFOVOffset = TargetSpeedFOVOffset;
+	}
+	else
+	{
+		CurrentSpeedDistanceOffset = FMath::FInterpTo(
+			CurrentSpeedDistanceOffset,
+			TargetSpeedDistanceOffset,
+			DeltaTime,
+			SafeSpeedInterpSpeed
+		);
+
+		CurrentSpeedFOVOffset = FMath::FInterpTo(
+			CurrentSpeedFOVOffset,
+			TargetSpeedFOVOffset,
+			DeltaTime,
+			SafeSpeedInterpSpeed
+		);
+	}
+}
+
+float UVoraxiaCameraComponent::CalculatePitchDistanceOffsetTarget() const
+{
+	if (!bEnablePitchDistanceModifier)
+	{
+		return 0.0f;
+	}
+
+	const float SafeMinPitch = FMath::Min(MinPitch, MaxPitch);
+	const float SafeMaxPitch = FMath::Max(MinPitch, MaxPitch);
+
+	const float ClampedPitch = FMath::Clamp(SmoothedRotation.Pitch, SafeMinPitch, SafeMaxPitch);
+	const float ClampedRestingPitch = FMath::Clamp(RestingCameraPitch, SafeMinPitch, SafeMaxPitch);
+
+	if (ClampedPitch < ClampedRestingPitch)
+	{
+		const float Range = FMath::Max(KINDA_SMALL_NUMBER, ClampedRestingPitch - SafeMinPitch);
+		const float Alpha = FMath::Clamp((ClampedRestingPitch - ClampedPitch) / Range, 0.0f, 1.0f);
+		const float SmoothAlpha = Alpha * Alpha * (3.0f - 2.0f * Alpha);
+
+		return PitchDistanceAtMinPitchOffset * SmoothAlpha;
+	}
+
+	const float Range = FMath::Max(KINDA_SMALL_NUMBER, SafeMaxPitch - ClampedRestingPitch);
+	const float Alpha = FMath::Clamp((ClampedPitch - ClampedRestingPitch) / Range, 0.0f, 1.0f);
+	const float SmoothAlpha = Alpha * Alpha * (3.0f - 2.0f * Alpha);
+
+	return PitchDistanceAtMaxPitchOffset * SmoothAlpha;
+}
+
+float UVoraxiaCameraComponent::CalculatePitchFOVOffsetTarget() const
+{
+	if (!bEnablePitchFOVModifier)
+	{
+		return 0.0f;
+	}
+
+	const float SafeMinPitch = FMath::Min(MinPitch, MaxPitch);
+	const float SafeMaxPitch = FMath::Max(MinPitch, MaxPitch);
+
+	const float ClampedPitch = FMath::Clamp(SmoothedRotation.Pitch, SafeMinPitch, SafeMaxPitch);
+	const float ClampedRestingPitch = FMath::Clamp(RestingCameraPitch, SafeMinPitch, SafeMaxPitch);
+
+	if (ClampedPitch < ClampedRestingPitch)
+	{
+		const float Range = FMath::Max(KINDA_SMALL_NUMBER, ClampedRestingPitch - SafeMinPitch);
+		const float Alpha = FMath::Clamp((ClampedRestingPitch - ClampedPitch) / Range, 0.0f, 1.0f);
+		const float SmoothAlpha = Alpha * Alpha * (3.0f - 2.0f * Alpha);
+
+		return PitchFOVAtMinPitchOffset * SmoothAlpha;
+	}
+
+	const float Range = FMath::Max(KINDA_SMALL_NUMBER, SafeMaxPitch - ClampedRestingPitch);
+	const float Alpha = FMath::Clamp((ClampedPitch - ClampedRestingPitch) / Range, 0.0f, 1.0f);
+	const float SmoothAlpha = Alpha * Alpha * (3.0f - 2.0f * Alpha);
+
+	return PitchFOVAtMaxPitchOffset * SmoothAlpha;
+}
+
+float UVoraxiaCameraComponent::CalculateSpeedDistanceOffsetTarget() const
+{
+	if (!bEnableSpeedDistanceModifier)
+	{
+		return 0.0f;
+	}
+
+	return SpeedDistanceOffset * CalculateSpeedModifierAlpha();
+}
+
+float UVoraxiaCameraComponent::CalculateSpeedFOVOffsetTarget() const
+{
+	if (!bEnableSpeedFOVModifier)
+	{
+		return 0.0f;
+	}
+
+	return SpeedFOVOffset * CalculateSpeedModifierAlpha();
+}
+
+float UVoraxiaCameraComponent::CalculateSpeedModifierAlpha() const
+{
+	const AActor* Owner = GetOwner();
+
+	if (!Owner || SpeedModifierFullSpeed <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+
+	const float Speed = Owner->GetVelocity().Size2D();
+	const float Alpha = FMath::Clamp(Speed / SpeedModifierFullSpeed, 0.0f, 1.0f);
+
+	return Alpha * Alpha * (3.0f - 2.0f * Alpha);
+}
+
+void UVoraxiaCameraComponent::UpdateMovementAnticipation(const float DeltaTime)
+{
+	const FVector TargetOffset = CalculateMovementAnticipationTarget();
+
+	const bool bReturningToNeutral = TargetOffset.IsNearlyZero();
+
+	const float InterpSpeed = bReturningToNeutral
+		? MovementAnticipationReturnSpeed
+		: MovementAnticipationInterpSpeed;
+
+	if (!bEnableMovementAnticipation)
+	{
+		CurrentMovementAnticipationOffset = FVector::ZeroVector;
+		return;
+	}
+
+	if (InterpSpeed <= KINDA_SMALL_NUMBER || DeltaTime <= KINDA_SMALL_NUMBER)
+	{
+		CurrentMovementAnticipationOffset = TargetOffset;
+		return;
+	}
+
+	CurrentMovementAnticipationOffset = FMath::VInterpTo(
+		CurrentMovementAnticipationOffset,
+		TargetOffset,
+		DeltaTime,
+		InterpSpeed
+	);
+}
+
+FVector UVoraxiaCameraComponent::CalculateMovementAnticipationTarget() const
+{
+	if (!bEnableMovementAnticipation)
+	{
+		return FVector::ZeroVector;
+	}
+
+	const AActor* Owner = GetOwner();
+
+	if (!Owner)
+	{
+		return FVector::ZeroVector;
+	}
+
+	const FVector Velocity = Owner->GetVelocity();
+	const FVector FlatVelocity(Velocity.X, Velocity.Y, 0.0f);
+
+	const float Speed = FlatVelocity.Size();
+
+	if (Speed <= KINDA_SMALL_NUMBER || MovementAnticipationFullSpeed <= KINDA_SMALL_NUMBER)
+	{
+		return FVector::ZeroVector;
+	}
+
+	const float SpeedAlpha = FMath::Clamp(
+		Speed / MovementAnticipationFullSpeed,
+		0.0f,
+		1.0f
+	);
+
+	if (SpeedAlpha < MovementAnticipationDeadZone)
+	{
+		return FVector::ZeroVector;
+	}
+
+	const FVector MovementDirection = FlatVelocity / Speed;
+
+	const FRotator CameraYawRotation(0.0f, SmoothedRotation.Yaw, 0.0f);
+	const FRotationMatrix CameraYawMatrix(CameraYawRotation);
+
+	const FVector CameraForward = CameraYawMatrix.GetUnitAxis(EAxis::X).GetSafeNormal2D();
+	const FVector CameraRight = CameraYawMatrix.GetUnitAxis(EAxis::Y).GetSafeNormal2D();
+
+	const float ForwardAmount = FVector::DotProduct(MovementDirection, CameraForward);
+	const float RightAmount = FVector::DotProduct(MovementDirection, CameraRight);
+
+	const float ForwardOffset = ForwardAmount >= 0.0f
+		? ForwardAmount * MovementAnticipationForwardOffset
+		: ForwardAmount * MovementAnticipationBackwardOffset;
+
+	const float SideOffset = RightAmount * MovementAnticipationSideOffset;
+
+	float LookMultiplier = 1.0f;
+
+	if (bReduceMovementAnticipationWhileLooking)
+	{
+		const bool bRecentlyLooked =
+			TimeSinceLastYawInput < MovementAnticipationLookInputThreshold
+			|| TimeSinceLastPitchInput < MovementAnticipationLookInputThreshold;
+
+		if (bRecentlyLooked)
+		{
+			LookMultiplier = FMath::Clamp(
+				LookInputAnticipationMultiplier,
+				0.0f,
+				1.0f
+			);
+		}
+	}
+
+	return FVector(
+		ForwardOffset,
+		SideOffset,
+		0.0f
+	) * SpeedAlpha * LookMultiplier;
+}
+
 FVector UVoraxiaCameraComponent::CalculatePivotLocation() const
 {
 	const AActor* Owner = GetOwner();
@@ -746,8 +1428,14 @@ FTransform UVoraxiaCameraComponent::CalculateCameraTransform(const float DeltaTi
 {
 	const FVector PivotLocation = CalculatePivotLocation();
 
-	const float Distance = FMath::Max(0.0f, RuntimeCameraDistance.CurrentValue);
-	const FVector EffectiveCameraOffset = GetCurrentCameraOffset();
+	const float Distance = FMath::Max(
+		0.0f,
+		RuntimeCameraDistance.CurrentValue + GetCurrentDynamicDistanceOffset()
+	);
+	
+	const FVector EffectiveCameraOffset =
+		GetCurrentCameraOffset()
+		+ CurrentMovementAnticipationOffset;
 
 	const FRotationMatrix RotationMatrix(SmoothedRotation);
 
@@ -1253,7 +1941,9 @@ void UVoraxiaCameraComponent::DestroySlateDebugPanel()
 float UVoraxiaCameraComponent::CalculateFinalFOV() const
 {
 	return FMath::Clamp(
-		BaseFOV + RuntimeFOVOffset.CurrentValue,
+		BaseFOV
+		+ RuntimeFOVOffset.CurrentValue
+		+ GetCurrentDynamicFOVOffset(),
 		MinFOV,
 		MaxFOV
 	);
