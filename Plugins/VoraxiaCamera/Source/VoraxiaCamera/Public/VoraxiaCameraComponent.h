@@ -468,6 +468,18 @@ protected:
 	/** Minimum distance, in Unreal units, required before the camera attempts to rotate toward a focus target. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem"))
 	float FocusMinimumTargetDistance = 25.0f;
+	
+	/** Maximum distance, in Unreal units, used when searching for tagged focus targets. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem", ClampMin="0.0"))
+	float FocusTargetSearchDistance = 5000.0f;
+
+	/** Ignores tagged focus targets that are behind the current camera view direction. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem"))
+	bool bRequireFocusTargetInFront = true;
+
+	/** Minimum forward dot value required when bRequireFocusTargetInFront is enabled. Higher means target must be closer to the centre of view. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem", ClampMin="-1.0", ClampMax="1.0"))
+	float FocusTargetMinForwardDot = 0.15f;
 
 	/** Draws collision and predictive avoidance probe lines and hit markers in the world. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")

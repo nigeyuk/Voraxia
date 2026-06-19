@@ -927,17 +927,33 @@ void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
 	}
 
 	UWorld* World = GetWorld();
+	AActor* Owner = GetOwner();
 
-	if (!World)
+	if (!World || !Owner)
 	{
 		return;
 	}
+
+	const FVector SearchOrigin = Owner->GetActorLocation();
+
+	const FVector ViewForward =
+		TargetCamera
+			? TargetCamera->GetForwardVector().GetSafeNormal()
+			: SmoothedRotation.Vector().GetSafeNormal();
+
+	const float MaxDistanceSquared =
+		FocusTargetSearchDistance > 0.0f
+			? FMath::Square(FocusTargetSearchDistance)
+			: TNumericLimits<float>::Max();
+
+	AActor* BestActor = nullptr;
+	float BestScore = TNumericLimits<float>::Max();
 
 	for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
 	{
 		AActor* Actor = *ActorIt;
 
-		if (!Actor || Actor == GetOwner())
+		if (!Actor || Actor == Owner)
 		{
 			continue;
 		}
@@ -947,26 +963,57 @@ void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
 			continue;
 		}
 
-		SetFocusActor(
-			Actor,
-			BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
-		);
+		const FVector ToActor = Actor->GetActorLocation() - SearchOrigin;
+		const float DistanceSquared = ToActor.SizeSquared();
 
+		if (DistanceSquared > MaxDistanceSquared)
+		{
+			continue;
+		}
+
+		const FVector DirectionToActor = ToActor.GetSafeNormal();
+
+		if (bRequireFocusTargetInFront)
+		{
+			const float ForwardDot = FVector::DotProduct(ViewForward, DirectionToActor);
+
+			if (ForwardDot < FocusTargetMinForwardDot)
+			{
+				continue;
+			}
+		}
+
+		const float Score = DistanceSquared;
+
+		if (Score < BestScore)
+		{
+			BestScore = Score;
+			BestActor = Actor;
+		}
+	}
+
+	if (!BestActor)
+	{
 		UE_LOG(
 			LogVoraxiaCamera,
-			Log,
-			TEXT("Voraxia camera focusing tagged actor '%s' with tag '%s'."),
-			*GetNameSafe(Actor),
+			Warning,
+			TEXT("Voraxia camera could not find a valid focus actor with tag '%s'."),
 			*DefaultFocusActorTag.ToString()
 		);
 
 		return;
 	}
 
+	SetFocusActor(
+		BestActor,
+		BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
+	);
+
 	UE_LOG(
 		LogVoraxiaCamera,
-		Warning,
-		TEXT("Voraxia camera could not find an actor with tag '%s'."),
+		Log,
+		TEXT("Voraxia camera focusing tagged actor '%s' with tag '%s'."),
+		*GetNameSafe(BestActor),
 		*DefaultFocusActorTag.ToString()
 	);
 }
