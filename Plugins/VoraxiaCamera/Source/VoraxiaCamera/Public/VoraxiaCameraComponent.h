@@ -144,6 +144,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Focus")
 	FVector GetCurrentFocusLocation() const;
 	
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Focus")
+	FString GetCurrentFocusTargetName() const;
+	
 	/** Finds the first actor with DefaultFocusActorTag and focuses it. */
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Focus")
 	void FocusDefaultTaggedActor(float BlendTime = -1.0f);
@@ -480,7 +483,11 @@ protected:
 	/** Minimum forward dot value required when bRequireFocusTargetInFront is enabled. Higher means target must be closer to the centre of view. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem", ClampMin="-1.0", ClampMax="1.0"))
 	float FocusTargetMinForwardDot = 0.15f;
-
+	
+	/** Draws the active focus target, focus line, and focus point while the focus system is active. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")
+	bool bDrawFocusDebug = false;
+	
 	/** Draws collision and predictive avoidance probe lines and hit markers in the world. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")
 	bool bDrawCameraCollisionDebug = false;

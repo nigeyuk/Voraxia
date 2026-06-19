@@ -621,14 +621,42 @@ FRotator UVoraxiaCameraComponent::GetSmoothedCameraRotation() const
 	return SmoothedRotation;
 }
 
+FString UVoraxiaCameraComponent::GetCurrentFocusTargetName() const
+{
+	if (const AActor* Actor = FocusTargetActor.Get())
+	{
+		return Actor->GetName();
+	}
+
+	if (const USceneComponent* Component = FocusTargetComponent.Get())
+	{
+		return Component->GetName();
+	}
+
+	if (bFocusUsesWorldLocation)
+	{
+		return TEXT("World Location");
+	}
+
+	if (bHasCachedFocusLocation)
+	{
+		return TEXT("Cached Focus");
+	}
+
+	return TEXT("None");
+}
+
 FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
 {
 	return FString::Printf(
-		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | DynDist: %.1f | Collision: %s | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | DynFOV: %.1f | FOV: %.1f"),
+		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | DynDist: %.1f | Collision: %s | Focus: %s %.2f '%s' | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | DynFOV: %.1f | FOV: %.1f"),
 		LastDesiredDistanceFromPivot,
 		LastEffectiveDistanceFromPivot,
 		GetCurrentDynamicDistanceOffset(),
 		bWasCameraCollisionBlocked ? TEXT("Blocked") : TEXT("Clear"),
+		IsFocusActive() ? TEXT("Active") : TEXT("None"),
+		FocusAlpha,
+		*GetCurrentFocusTargetName(),
 		DesiredRotation.Pitch,
 		DesiredRotation.Yaw,
 		SmoothedRotation.Pitch,
@@ -1111,6 +1139,51 @@ void UVoraxiaCameraComponent::UpdateFocus(const float DeltaTime)
 		TargetFocusRotation.Pitch,
 		FocusAlpha
 	);
+	
+	if (bDrawFocusDebug)
+	{
+		const UWorld* World = GetWorld();
+
+		if (World)
+		{
+			DrawDebugSphere(
+				World,
+				FocusLocation,
+				24.0f,
+				16,
+				FColor::Orange,
+				false,
+				0.0f,
+				0,
+				2.0f
+			);
+
+			DrawDebugLine(
+				World,
+				PivotLocation,
+				FocusLocation,
+				FColor::Orange,
+				false,
+				0.0f,
+				0,
+				1.5f
+			);
+
+			DrawDebugString(
+				World,
+				FocusLocation + FVector(0.0f, 0.0f, 40.0f),
+				FString::Printf(
+					TEXT("Focus %.2f | %s"),
+					FocusAlpha,
+					*GetCurrentFocusTargetName()
+				),
+				nullptr,
+				FColor::Orange,
+				0.0f,
+				true
+			);
+		}
+	}
 }
 
 void UVoraxiaCameraComponent::BeginFocusBlend(
