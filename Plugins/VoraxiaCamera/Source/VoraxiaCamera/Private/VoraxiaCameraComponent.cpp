@@ -516,6 +516,24 @@ FVector UVoraxiaCameraComponent::GetCurrentFocusLocation() const
 	return FVector::ZeroVector;
 }
 
+bool UVoraxiaCameraComponent::HasFocusTarget() const
+{
+	return FocusTargetActor.IsValid()
+		|| FocusTargetComponent.IsValid()
+		|| bFocusUsesWorldLocation
+		|| bHasCachedFocusLocation;
+}
+
+AActor* UVoraxiaCameraComponent::GetCurrentFocusActor() const
+{
+	return FocusTargetActor.Get();
+}
+
+USceneComponent* UVoraxiaCameraComponent::GetCurrentFocusComponent() const
+{
+	return FocusTargetComponent.Get();
+}
+
 float UVoraxiaCameraComponent::GetCurrentPitchDistanceOffset() const
 {
 	return CurrentPitchDistanceOffset;

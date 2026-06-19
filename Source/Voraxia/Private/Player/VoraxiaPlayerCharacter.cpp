@@ -309,11 +309,25 @@ void AVoraxiaPlayerCharacter::UpdateSprintSpeed(const float DeltaTime)
 
 void AVoraxiaPlayerCharacter::FocusStarted(const FInputActionValue& Value)
 {
-	UE_LOG(LogTemp, Warning, TEXT("Voraxia FocusStarted fired."));
-
 	if (!VoraxiaCameraComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("VoraxiaCameraComponent is null."));
+		return;
+	}
+
+	if (FocusInputMode == EVoraxiaFocusInputMode::Toggle)
+	{
+		bFocusToggleActive = !bFocusToggleActive;
+
+		if (bFocusToggleActive)
+		{
+			VoraxiaCameraComponent->FocusDefaultTaggedActor(FocusBlendInTime);
+		}
+		else
+		{
+			VoraxiaCameraComponent->ClearFocus(FocusBlendOutTime);
+		}
+
 		return;
 	}
 
@@ -322,7 +336,10 @@ void AVoraxiaPlayerCharacter::FocusStarted(const FInputActionValue& Value)
 
 void AVoraxiaPlayerCharacter::FocusEnded(const FInputActionValue& Value)
 {
-	UE_LOG(LogTemp, Warning, TEXT("Voraxia FocusEnded fired."));
+	if (FocusInputMode == EVoraxiaFocusInputMode::Toggle)
+	{
+		return;
+	}
 
 	if (!VoraxiaCameraComponent)
 	{
@@ -330,6 +347,7 @@ void AVoraxiaPlayerCharacter::FocusEnded(const FInputActionValue& Value)
 		return;
 	}
 
+	bFocusToggleActive = false;
 	VoraxiaCameraComponent->ClearFocus(FocusBlendOutTime);
 }
 

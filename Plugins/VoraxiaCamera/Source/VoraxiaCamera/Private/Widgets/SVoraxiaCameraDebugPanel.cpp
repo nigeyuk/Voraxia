@@ -93,6 +93,15 @@ void SVoraxiaCameraDebugPanel::Construct(const FArguments& InArgs)
 					.AutoHeight()
 					[
 						MakeMetric(
+							FText::FromString(TEXT("Has Target")),
+							TAttribute<FText>::CreateLambda([this]() { return GetFocusHasTargetText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
 							FText::FromString(TEXT("Alpha")),
 							TAttribute<FText>::CreateLambda([this]() { return GetFocusAlphaText(); })
 						)
@@ -312,6 +321,20 @@ FText SVoraxiaCameraDebugPanel::GetFocusActiveText() const
 	}
 
 	return Component->IsFocusActive()
+		? FText::FromString(TEXT("Yes"))
+		: FText::FromString(TEXT("No"));
+}
+
+FText SVoraxiaCameraDebugPanel::GetFocusHasTargetText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component)
+	{
+		return FText::FromString(TEXT("No Component"));
+	}
+
+	return Component->HasFocusTarget()
 		? FText::FromString(TEXT("Yes"))
 		: FText::FromString(TEXT("No"));
 }

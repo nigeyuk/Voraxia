@@ -13,6 +13,13 @@ class UVoraxiaCameraComponent;
 
 struct FInputActionValue;
 
+UENUM(BlueprintType)
+enum class EVoraxiaFocusInputMode : uint8
+{
+	Hold UMETA(DisplayName="Hold"),
+	Toggle UMETA(DisplayName="Toggle")
+};
+
 UCLASS()
 class VORAXIA_API AVoraxiaPlayerCharacter : public ACharacter
 {
@@ -72,6 +79,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement|Sprint")
 	bool bCanSprint = true;
 	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Camera|Focus")
+	EVoraxiaFocusInputMode FocusInputMode = EVoraxiaFocusInputMode::Hold;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Camera|Focus")
 	float FocusBlendInTime = 0.35f;
@@ -92,6 +101,7 @@ private:
 	void UpdateSprintSpeed(float DeltaTime);
 	
 	bool bWantsToSprint = false;
+	bool bFocusToggleActive = false;
 	
 	void FocusStarted(const FInputActionValue& Value);
 	void FocusEnded(const FInputActionValue& Value);

@@ -33,6 +33,7 @@ private:
 	FText GetModeText() const;
 	FText GetCollisionText() const;
 	FText GetFocusActiveText() const;
+	FText GetFocusHasTargetText() const;
 	FText GetFocusAlphaText() const;
 	FText GetFocusTargetText() const;
 	FText GetFocusLocationText() const;

@@ -143,6 +143,15 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Focus")
 	FVector GetCurrentFocusLocation() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Focus")
+	bool HasFocusTarget() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Focus")
+	AActor* GetCurrentFocusActor() const;
+
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Focus")
+	USceneComponent* GetCurrentFocusComponent() const;
 	
 	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Focus")
 	FString GetCurrentFocusTargetName() const;
