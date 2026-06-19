@@ -415,6 +415,8 @@ void UVoraxiaCameraComponent::SetFocusActor(
 		1.0f,
 		BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
 	);
+
+	LogScannableFocusTarget(NewFocusActor);
 }
 
 void UVoraxiaCameraComponent::SetFocusComponent(
@@ -712,6 +714,101 @@ FText UVoraxiaCameraComponent::GetCurrentFocusScanSummary() const
 	}
 
 	return IVoraxiaScannableInterface::Execute_GetScanSummary(Actor);
+}
+
+void UVoraxiaCameraComponent::LogScannableFocusTarget(AActor* Actor) const
+{
+	if (!Actor)
+	{
+		return;
+	}
+
+	if (!Actor->GetClass()->ImplementsInterface(UVoraxiaScannableInterface::StaticClass()))
+	{
+		UE_LOG(
+			LogVoraxiaCamera,
+			Verbose,
+			TEXT("Voraxia focus target '%s' is not scannable."),
+			*GetNameSafe(Actor)
+		);
+
+		return;
+	}
+
+	if (!IVoraxiaScannableInterface::Execute_CanBeScanned(Actor, GetOwner()))
+	{
+		UE_LOG(
+			LogVoraxiaCamera,
+			Log,
+			TEXT("Voraxia focus target '%s' implements scan data but cannot currently be scanned."),
+			*GetNameSafe(Actor)
+		);
+
+		return;
+	}
+
+	const FText ScanDisplayName = IVoraxiaScannableInterface::Execute_GetScanDisplayName(Actor);
+	const FText ScanSummary = IVoraxiaScannableInterface::Execute_GetScanSummary(Actor);
+	const float ScanTimeSeconds = IVoraxiaScannableInterface::Execute_GetScanTimeSeconds(Actor);
+
+	const FString ScanDisplayNameString = ScanDisplayName.ToString();
+	const FString ScanSummaryString = ScanSummary.ToString();
+
+	UE_LOG(
+		LogVoraxiaCamera,
+		Log,
+		TEXT("Voraxia scan target acquired: '%s' on actor '%s'. Scan time: %.2fs."),
+		*ScanDisplayNameString,
+		*GetNameSafe(Actor),
+		ScanTimeSeconds
+	);
+
+	UE_LOG(
+		LogVoraxiaCamera,
+		Log,
+		TEXT("Voraxia scan summary: %s"),
+		*ScanSummaryString
+	);
+
+	const TArray<FVoraxiaScanCompositionEntry> Composition =
+		IVoraxiaScannableInterface::Execute_GetScanComposition(Actor);
+
+	if (Composition.Num() <= 0)
+	{
+		UE_LOG(
+			LogVoraxiaCamera,
+			Log,
+			TEXT("Voraxia scan composition: no composition entries.")
+		);
+
+		return;
+	}
+
+	UE_LOG(
+		LogVoraxiaCamera,
+		Log,
+		TEXT("Voraxia scan composition:")
+	);
+
+	for (const FVoraxiaScanCompositionEntry& Entry : Composition)
+	{
+		const FString MaterialIdString = Entry.MaterialId.ToString();
+		const FString EntryDisplayNameString = Entry.DisplayName.ToString();
+
+		const FString DisplayName =
+			EntryDisplayNameString.IsEmpty()
+				? MaterialIdString
+				: EntryDisplayNameString;
+
+		UE_LOG(
+			LogVoraxiaCamera,
+			Log,
+			TEXT("  - %s [%s]: %.1f%%"),
+			*DisplayName,
+			*MaterialIdString,
+			Entry.Percentage
+		);
+	}
 }
 
 FString UVoraxiaCameraComponent::GetCameraDebugSummary() const

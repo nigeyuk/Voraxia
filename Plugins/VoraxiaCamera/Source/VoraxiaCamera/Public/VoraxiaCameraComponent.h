@@ -688,6 +688,7 @@ private:
 	void CreateSlateDebugPanel();
 	void DestroySlateDebugPanel();
 	
+	void LogScannableFocusTarget(AActor* Actor) const;
 	void UpdateFocus(float DeltaTime);
 	void BeginFocusBlend(float TargetAlpha, float BlendTime);
 	bool TryGetFocusLocation(FVector& OutFocusLocation) const;
