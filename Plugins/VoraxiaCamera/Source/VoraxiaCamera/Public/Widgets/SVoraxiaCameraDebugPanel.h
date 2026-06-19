@@ -32,6 +32,10 @@ private:
 
 	FText GetModeText() const;
 	FText GetCollisionText() const;
+	FText GetFocusActiveText() const;
+	FText GetFocusAlphaText() const;
+	FText GetFocusTargetText() const;
+	FText GetFocusLocationText() const;
 	FText GetDesiredDistanceText() const;
 	FText GetEffectiveDistanceText() const;
 	FText GetCollisionDistanceText() const;

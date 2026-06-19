@@ -77,6 +77,50 @@ void SVoraxiaCameraDebugPanel::Construct(const FArguments& InArgs)
 					.AutoHeight()
 					.Padding(0.0f, 8.0f, 0.0f, 4.0f)
 					[
+						MakeHeading(FText::FromString(TEXT("Focus")))
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Active")),
+							TAttribute<FText>::CreateLambda([this]() { return GetFocusActiveText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Alpha")),
+							TAttribute<FText>::CreateLambda([this]() { return GetFocusAlphaText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Target")),
+							TAttribute<FText>::CreateLambda([this]() { return GetFocusTargetText(); })
+						)
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						MakeMetric(
+							FText::FromString(TEXT("Location")),
+							TAttribute<FText>::CreateLambda([this]() { return GetFocusLocationText(); })
+						)
+					]
+
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 8.0f, 0.0f, 4.0f)
+					[
 						MakeHeading(FText::FromString(TEXT("Distance")))
 					]
 
@@ -257,6 +301,51 @@ FText SVoraxiaCameraDebugPanel::GetCollisionText() const
 		? FText::FromString(TEXT("Blocked"))
 		: FText::FromString(TEXT("Clear"));
 }
+
+FText SVoraxiaCameraDebugPanel::GetFocusActiveText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component)
+	{
+		return FText::FromString(TEXT("No Component"));
+	}
+
+	return Component->IsFocusActive()
+		? FText::FromString(TEXT("Yes"))
+		: FText::FromString(TEXT("No"));
+}
+
+FText SVoraxiaCameraDebugPanel::GetFocusAlphaText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	return Component
+		? FText::FromString(FString::Printf(TEXT("%.2f"), Component->GetCurrentFocusAlpha()))
+		: FText::FromString(TEXT("-"));
+}
+
+FText SVoraxiaCameraDebugPanel::GetFocusTargetText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	return Component
+		? FText::FromString(Component->GetCurrentFocusTargetName())
+		: FText::FromString(TEXT("-"));
+}
+
+FText SVoraxiaCameraDebugPanel::GetFocusLocationText() const
+{
+	const UVoraxiaCameraComponent* Component = CameraComponent.Get();
+
+	if (!Component || !Component->IsFocusActive())
+	{
+		return FText::FromString(TEXT("-"));
+	}
+
+	return FText::FromString(Component->GetCurrentFocusLocation().ToCompactString());
+}
+
 
 FText SVoraxiaCameraDebugPanel::GetDesiredDistanceText() const
 {
