@@ -29,6 +29,12 @@ struct VORAXIACAMERA_API FVoraxiaCameraPersistentSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Framing")
 	FVector AdditionalCameraOffset = FVector::ZeroVector;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Framing|Shoulder", meta=(ClampMin="0.0", UIMin="0.0"))
+	float ShoulderOffset = 55.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Framing|Shoulder")
+	bool bUseRightShoulder = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Framing")
 	FVector AdditionalPivotOffset = FVector::ZeroVector;
 
@@ -73,6 +79,19 @@ struct VORAXIACAMERA_API FVoraxiaCameraPersistentSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Rotation")
 	float LookInputDeadZone = 0.01f;
+
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	bool bEnableYawConstraints = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Rotation|Yaw Constraints", meta=(EditCondition="bEnableYawConstraints", ClampMin="0.0", UIMin="0.0"))
+	float YawConstraintSoftZone = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Rotation|Yaw Constraints|Debug", meta=(EditCondition="bEnableYawConstraints"))
+	bool bDrawYawConstraintDebug = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Rotation|Yaw Constraints|Debug", meta=(EditCondition="bEnableYawConstraints && bDrawYawConstraintDebug", ClampMin="10.0", UIMin="10.0"))
+	float YawConstraintDebugDrawLength = 180.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Collision")
 	bool bEnableCameraCollision = true;
@@ -409,4 +428,3 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voraxia Camera|Settings Asset", meta=(EditCondition="bIncludeOcclusionDitherSettings"))
 	FVoraxiaCameraOcclusionDitherSettings OcclusionDitherSettings;
 };
-

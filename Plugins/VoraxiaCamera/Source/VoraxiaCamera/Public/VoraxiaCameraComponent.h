@@ -122,6 +122,44 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Input")
 	void AddPitchInput(float Value);
 
+
+	/** Activates a yaw window around ReferenceYaw. Min/Max values are signed degrees relative to that reference. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	void SetYawConstraint(
+		float ReferenceYaw,
+		float MinYawDelta,
+		float MaxYawDelta,
+		float BlendTime = 0.0f
+	);
+
+	/** Activates a yaw window centred on the current desired camera yaw. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	void SetYawConstraintAroundCurrentView(
+		float MinYawDelta,
+		float MaxYawDelta,
+		float BlendTime = 0.0f
+	);
+
+	/** Smoothly releases the active yaw window back to unrestricted rotation. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	void ClearYawConstraint(float BlendTime = 0.0f);
+
+	/** Returns true while a yaw constraint is active or blending in/out. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	bool IsYawConstraintActive() const;
+
+	/** Returns the current blended yaw-reference angle used by the active constraint. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	float GetYawConstraintReferenceYaw() const;
+
+	/** Returns the current blended minimum yaw delta, in degrees, relative to the reference yaw. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	float GetYawConstraintMinDelta() const;
+
+	/** Returns the current blended maximum yaw delta, in degrees, relative to the reference yaw. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	float GetYawConstraintMaxDelta() const;
+
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Framing")
 	void SetFraming(
 		float NewCameraDistance,
@@ -166,8 +204,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Framing")
 	void ResetFOVOffset(float BlendTime = 0.25f, UCurveFloat* BlendCurve = nullptr);
 
-	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Framing")
+	/** Sets the active shoulder. True places the camera on the positive local-Y side; false places it on the negative local-Y side. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Framing|Shoulder")
+	void SetUseRightShoulder(bool bNewUseRightShoulder, float BlendTime = 0.25f, UCurveFloat* BlendCurve = nullptr);
+
+	/** Changes the positive local-Y distance used by the shoulder camera. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Framing|Shoulder")
+	void SetShoulderOffset(float NewShoulderOffset, float BlendTime = 0.25f, UCurveFloat* BlendCurve = nullptr);
+
+	/** Smoothly swaps between the configured left and right shoulder positions. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Framing|Shoulder")
 	void SwapCameraShoulder(float BlendTime = 0.25f, UCurveFloat* BlendCurve = nullptr);
+
+	/** Returns true when the camera is using the positive local-Y shoulder position. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Framing|Shoulder")
+	bool IsUsingRightShoulder() const;
+
+	/** Returns the current blended signed local-Y shoulder offset. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Framing|Shoulder")
+	float GetCurrentShoulderOffset() const;
 	
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Focus")
 	void SetFocusActor(AActor* NewFocusActor, float BlendTime = 0.35f, FName SocketName = NAME_None);
@@ -368,9 +423,17 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Framing")
 	float PivotHeight = 70.0f;
 
-	/** Permanent local-space offset applied to the camera position after the base distance is calculated. */
+	/** Permanent local-space camera offset applied in addition to the dedicated shoulder offset. Keep Y at zero for normal shoulder switching. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Framing")
 	FVector AdditionalCameraOffset = FVector::ZeroVector;
+
+	/** Positive local-Y distance, in Unreal units, used for over-the-shoulder framing. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Framing|Shoulder", meta=(ClampMin="0.0", UIMin="0.0"))
+	float ShoulderOffset = 55.0f;
+
+	/** Uses the positive local-Y shoulder when true, or the negative local-Y shoulder when false. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Framing|Shoulder")
+	bool bUseRightShoulder = true;
 
 	/** Permanent world-space offset added to the camera pivot before the camera position is calculated. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Framing")
@@ -431,6 +494,23 @@ protected:
 	/** Small input threshold used to ignore tiny yaw or pitch input noise. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation")
 	float LookInputDeadZone = 0.01f;
+
+	
+	/** Master switch for temporary yaw constraints set through the runtime API. No constraint is active by default. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Constraints")
+	bool bEnableYawConstraints = true;
+
+	/** Width, in degrees, of the soft zone near a yaw limit where look input progressively tapers. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Constraints", meta=(EditCondition="bEnableYawConstraints", ClampMin="0.0", UIMin="0.0"))
+	float YawConstraintSoftZone = 10.0f;
+
+	/** Draws the active yaw reference and its left/right limit rays from the current camera pivot. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Constraints|Debug", meta=(EditCondition="bEnableYawConstraints"))
+	bool bDrawYawConstraintDebug = false;
+
+	/** Length, in Unreal units, of the yaw-constraint reference and limit rays shown by debug drawing. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Rotation|Yaw Constraints|Debug", meta=(EditCondition="bEnableYawConstraints && bDrawYawConstraintDebug", ClampMin="10.0", UIMin="10.0"))
+	float YawConstraintDebugDrawLength = 180.0f;
 	
 	/** Enables camera collision sweeps between the pivot and desired camera location. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Collision")
@@ -778,6 +858,7 @@ private:
 	FVoraxiaCameraRuntimeFloat RuntimeCameraDistance;
 	FVoraxiaCameraRuntimeFloat RuntimePivotHeight;
 	FVoraxiaCameraRuntimeFloat RuntimeFOVOffset;
+	FVoraxiaCameraRuntimeFloat RuntimeShoulderOffset;
 
 	FVoraxiaCameraRuntimeVector RuntimeCameraOffset;
 	FVoraxiaCameraRuntimeVector RuntimePivotOffset;
@@ -803,6 +884,27 @@ private:
 
 	float CurrentSpeedDistanceOffset = 0.0f;
 	float CurrentSpeedFOVOffset = 0.0f;
+
+	
+	bool bYawConstraintTargetActive = false;
+
+	float CurrentYawConstraintReferenceYaw = 0.0f;
+	float CurrentYawConstraintMinDelta = -180.0f;
+	float CurrentYawConstraintMaxDelta = 180.0f;
+	float CurrentYawConstraintAlpha = 0.0f;
+
+	float YawConstraintStartReferenceYaw = 0.0f;
+	float YawConstraintStartMinDelta = -180.0f;
+	float YawConstraintStartMaxDelta = 180.0f;
+	float YawConstraintStartAlpha = 0.0f;
+
+	float YawConstraintTargetReferenceYaw = 0.0f;
+	float YawConstraintTargetMinDelta = -180.0f;
+	float YawConstraintTargetMaxDelta = 180.0f;
+	float YawConstraintTargetAlpha = 0.0f;
+
+	float YawConstraintBlendTime = 0.0f;
+	float YawConstraintBlendElapsed = 0.0f;
 	
 	TWeakObjectPtr<AActor> FocusTargetActor;
 	TWeakObjectPtr<USceneComponent> FocusTargetComponent;
@@ -854,9 +956,27 @@ private:
 	void ApplyPersistentSettings(const FVoraxiaCameraPersistentSettings& InSettings);
 	void ResetTransientStateAfterSettingsApply();
 
+	float GetTargetShoulderOffset() const;
+
 	void InitializeRuntimeState();
 	void UpdateRuntimeState(float DeltaTime);
 	void UpdateInputRotation(float DeltaTime);
+
+	
+	void ResetYawConstraintState();
+	void BeginYawConstraintBlend(
+		float ReferenceYaw,
+		float MinYawDelta,
+		float MaxYawDelta,
+		float TargetAlpha,
+		float BlendTime
+	);
+	void UpdateYawConstraintState(float DeltaTime);
+	void ApplyYawInputWithConstraints(float YawInputDelta);
+	void ApplyYawConstraints();
+	float ClampYawToConstraint(float Yaw) const;
+	float GetYawConstraintSoftZone() const;
+	void DrawYawConstraintDebug() const;
 
 	FVector CalculatePivotLocation() const;
 	FTransform CalculateCameraTransform(float DeltaTime);

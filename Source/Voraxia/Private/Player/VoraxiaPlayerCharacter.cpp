@@ -210,6 +210,20 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Voraxia FocusAction is not assigned."));
 	}
+
+	if (SwapShoulderAction)
+	{
+		EnhancedInputComponent->BindAction(
+			SwapShoulderAction,
+			ETriggerEvent::Started,
+			this,
+			&AVoraxiaPlayerCharacter::SwapShoulderStarted
+		);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia SwapShoulderAction is not assigned."));
+	}
 }
 
 void AVoraxiaPlayerCharacter::AddDefaultMappingContext()
@@ -362,3 +376,20 @@ void AVoraxiaPlayerCharacter::FocusEnded(const FInputActionValue& Value)
 	VoraxiaCameraComponent->ClearFocus(FocusBlendOutTime);
 }
 
+void AVoraxiaPlayerCharacter::SwapShoulderStarted(
+	const FInputActionValue& Value
+)
+{
+	if (!VoraxiaCameraComponent)
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("VoraxiaCameraComponent is null when swapping shoulder.")
+		);
+
+		return;
+	}
+
+	VoraxiaCameraComponent->SwapCameraShoulder(0.25f);
+}

@@ -190,6 +190,7 @@ void UVoraxiaCameraComponent::BeginPlay()
 
 	SmoothedRotation = DesiredRotation;
 	UnfocusedDesiredRotation = DesiredRotation;
+	ResetYawConstraintState();
 
 	if (TargetCamera)
 	{
@@ -240,6 +241,7 @@ void UVoraxiaCameraComponent::TickComponent(
 	}
 
 	UpdateRuntimeState(DeltaTime);
+	UpdateYawConstraintState(DeltaTime);
 	UpdateInputRotation(DeltaTime);
 	UpdateDynamicModifiers(DeltaTime);
 	UpdateMovementAnticipation(DeltaTime);
@@ -542,6 +544,101 @@ void UVoraxiaCameraComponent::AddPitchInput(const float Value)
 	PendingPitchInput += bInvertPitchInput ? -Value : Value;
 }
 
+
+void UVoraxiaCameraComponent::SetYawConstraint(
+	const float ReferenceYaw,
+	const float MinYawDelta,
+	const float MaxYawDelta,
+	const float BlendTime
+)
+{
+	const float SafeMinYawDelta = FMath::Clamp(
+		FMath::Min(MinYawDelta, MaxYawDelta),
+		-180.0f,
+		180.0f
+	);
+
+	const float SafeMaxYawDelta = FMath::Clamp(
+		FMath::Max(MinYawDelta, MaxYawDelta),
+		-180.0f,
+		180.0f
+	);
+
+	if (!IsYawConstraintActive())
+	{
+		CurrentYawConstraintReferenceYaw = FMath::UnwindDegrees(DesiredRotation.Yaw);
+		CurrentYawConstraintMinDelta = -180.0f;
+		CurrentYawConstraintMaxDelta = 180.0f;
+		CurrentYawConstraintAlpha = 0.0f;
+	}
+
+	BeginYawConstraintBlend(
+		ReferenceYaw,
+		SafeMinYawDelta,
+		SafeMaxYawDelta,
+		1.0f,
+		BlendTime
+	);
+
+	if (BlendTime <= KINDA_SMALL_NUMBER)
+	{
+		DesiredRotation.Yaw = ClampYawToConstraint(DesiredRotation.Yaw);
+		UnfocusedDesiredRotation.Yaw = DesiredRotation.Yaw;
+	}
+}
+
+void UVoraxiaCameraComponent::SetYawConstraintAroundCurrentView(
+	const float MinYawDelta,
+	const float MaxYawDelta,
+	const float BlendTime
+)
+{
+	SetYawConstraint(
+		DesiredRotation.Yaw,
+		MinYawDelta,
+		MaxYawDelta,
+		BlendTime
+	);
+}
+
+void UVoraxiaCameraComponent::ClearYawConstraint(const float BlendTime)
+{
+	if (!IsYawConstraintActive())
+	{
+		return;
+	}
+
+	BeginYawConstraintBlend(
+		CurrentYawConstraintReferenceYaw,
+		-180.0f,
+		180.0f,
+		0.0f,
+		BlendTime
+	);
+}
+
+bool UVoraxiaCameraComponent::IsYawConstraintActive() const
+{
+	return bYawConstraintTargetActive
+		|| CurrentYawConstraintAlpha > KINDA_SMALL_NUMBER
+		|| YawConstraintTargetAlpha > KINDA_SMALL_NUMBER;
+}
+
+float UVoraxiaCameraComponent::GetYawConstraintReferenceYaw() const
+{
+	return CurrentYawConstraintReferenceYaw;
+}
+
+float UVoraxiaCameraComponent::GetYawConstraintMinDelta() const
+{
+	return CurrentYawConstraintMinDelta;
+}
+
+float UVoraxiaCameraComponent::GetYawConstraintMaxDelta() const
+{
+	return CurrentYawConstraintMaxDelta;
+}
+
 void UVoraxiaCameraComponent::SetFraming(
 	const float NewCameraDistance,
 	const float NewPivotHeight,
@@ -656,17 +753,56 @@ void UVoraxiaCameraComponent::ResetFOVOffset(
 	RuntimeFOVOffset.Set(0.0f, BlendTime, BlendCurve);
 }
 
+void UVoraxiaCameraComponent::SetUseRightShoulder(
+	const bool bNewUseRightShoulder,
+	const float BlendTime,
+	UCurveFloat* BlendCurve
+)
+{
+	bUseRightShoulder = bNewUseRightShoulder;
+
+	RuntimeShoulderOffset.Set(
+		GetTargetShoulderOffset(),
+		BlendTime,
+		BlendCurve
+	);
+}
+
+void UVoraxiaCameraComponent::SetShoulderOffset(
+	const float NewShoulderOffset,
+	const float BlendTime,
+	UCurveFloat* BlendCurve
+)
+{
+	ShoulderOffset = FMath::Max(0.0f, NewShoulderOffset);
+
+	RuntimeShoulderOffset.Set(
+		GetTargetShoulderOffset(),
+		BlendTime,
+		BlendCurve
+	);
+}
+
 void UVoraxiaCameraComponent::SwapCameraShoulder(
 	const float BlendTime,
 	UCurveFloat* BlendCurve
 )
 {
-	const FVector CurrentEffectiveCameraOffset = GetCurrentCameraOffset();
+	SetUseRightShoulder(
+		!bUseRightShoulder,
+		BlendTime,
+		BlendCurve
+	);
+}
 
-	FVector NewRuntimeCameraOffset = RuntimeCameraOffset.CurrentValue;
-	NewRuntimeCameraOffset.Y = -CurrentEffectiveCameraOffset.Y - AdditionalCameraOffset.Y;
+bool UVoraxiaCameraComponent::IsUsingRightShoulder() const
+{
+	return bUseRightShoulder;
+}
 
-	RuntimeCameraOffset.Set(NewRuntimeCameraOffset, BlendTime, BlendCurve);
+float UVoraxiaCameraComponent::GetCurrentShoulderOffset() const
+{
+	return RuntimeShoulderOffset.CurrentValue;
 }
 
 void UVoraxiaCameraComponent::SetFocusActor(
@@ -857,7 +993,10 @@ float UVoraxiaCameraComponent::GetCurrentPivotHeight() const
 
 FVector UVoraxiaCameraComponent::GetCurrentCameraOffset() const
 {
-	return AdditionalCameraOffset + RuntimeCameraOffset.CurrentValue;
+	FVector CurrentCameraOffset = AdditionalCameraOffset + RuntimeCameraOffset.CurrentValue;
+	CurrentCameraOffset.Y += RuntimeShoulderOffset.CurrentValue;
+
+	return CurrentCameraOffset;
 }
 
 FVector UVoraxiaCameraComponent::GetCurrentPivotOffset() const
@@ -1145,7 +1284,7 @@ void UVoraxiaCameraComponent::LogScannableFocusTarget(AActor* Actor) const
 FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
 {
 	return FString::Printf(
-		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | DynDist: %.1f | Collision: %s | Focus: %s %.2f '%s' | Scan: %s | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | DynFOV: %.1f | FOV: %.1f"),
+		TEXT("VoraxiaCamera | DesiredDist: %.1f | EffectiveDist: %.1f | DynDist: %.1f | Collision: %s | Focus: %s %.2f '%s' | Scan: %s | YawLimit: %s [%.1f, %.1f] | DesiredRot P/Y: %.1f / %.1f | SmoothedRot P/Y: %.1f / %.1f | DynFOV: %.1f | FOV: %.1f"),
 		LastDesiredDistanceFromPivot,
 		LastEffectiveDistanceFromPivot,
 		GetCurrentDynamicDistanceOffset(),
@@ -1154,6 +1293,9 @@ FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
 		FocusAlpha,
 		*GetCurrentFocusTargetName(),
 		IsCurrentFocusTargetScannable() ? TEXT("Yes") : TEXT("No"),
+		IsYawConstraintActive() ? TEXT("Active") : TEXT("Clear"),
+		GetYawConstraintMinDelta(),
+		GetYawConstraintMaxDelta(),
 		DesiredRotation.Pitch,
 		DesiredRotation.Yaw,
 		SmoothedRotation.Pitch,
@@ -1248,6 +1390,8 @@ void UVoraxiaCameraComponent::PopulatePersistentSettings(
 	OutSettings.CameraDistance = CameraDistance;
 	OutSettings.PivotHeight = PivotHeight;
 	OutSettings.AdditionalCameraOffset = AdditionalCameraOffset;
+	OutSettings.ShoulderOffset = ShoulderOffset;
+	OutSettings.bUseRightShoulder = bUseRightShoulder;
 	OutSettings.AdditionalPivotOffset = AdditionalPivotOffset;
 	OutSettings.bClampCameraOffsetWithinDistance = bClampCameraOffsetWithinDistance;
 	OutSettings.bUseTargetCameraFOVAsBase = bUseTargetCameraFOVAsBase;
@@ -1263,6 +1407,10 @@ void UVoraxiaCameraComponent::PopulatePersistentSettings(
 	OutSettings.bEnableRotationLag = bEnableRotationLag;
 	OutSettings.RotationLagSpeed = RotationLagSpeed;
 	OutSettings.LookInputDeadZone = LookInputDeadZone;
+	OutSettings.bEnableYawConstraints = bEnableYawConstraints;
+	OutSettings.YawConstraintSoftZone = YawConstraintSoftZone;
+	OutSettings.bDrawYawConstraintDebug = bDrawYawConstraintDebug;
+	OutSettings.YawConstraintDebugDrawLength = YawConstraintDebugDrawLength;
 	OutSettings.bEnableCameraCollision = bEnableCameraCollision;
 	OutSettings.CameraCollisionChannel = CameraCollisionChannel;
 	OutSettings.CameraCollisionRadius = CameraCollisionRadius;
@@ -1356,6 +1504,8 @@ void UVoraxiaCameraComponent::ApplyPersistentSettings(
 	CameraDistance = InSettings.CameraDistance;
 	PivotHeight = InSettings.PivotHeight;
 	AdditionalCameraOffset = InSettings.AdditionalCameraOffset;
+	ShoulderOffset = FMath::Max(0.0f, InSettings.ShoulderOffset);
+	bUseRightShoulder = InSettings.bUseRightShoulder;
 	AdditionalPivotOffset = InSettings.AdditionalPivotOffset;
 	bClampCameraOffsetWithinDistance = InSettings.bClampCameraOffsetWithinDistance;
 	bUseTargetCameraFOVAsBase = InSettings.bUseTargetCameraFOVAsBase;
@@ -1371,6 +1521,10 @@ void UVoraxiaCameraComponent::ApplyPersistentSettings(
 	bEnableRotationLag = InSettings.bEnableRotationLag;
 	RotationLagSpeed = InSettings.RotationLagSpeed;
 	LookInputDeadZone = InSettings.LookInputDeadZone;
+	bEnableYawConstraints = InSettings.bEnableYawConstraints;
+	YawConstraintSoftZone = FMath::Max(0.0f, InSettings.YawConstraintSoftZone);
+	bDrawYawConstraintDebug = InSettings.bDrawYawConstraintDebug;
+	YawConstraintDebugDrawLength = FMath::Max(10.0f, InSettings.YawConstraintDebugDrawLength);
 	bEnableCameraCollision = InSettings.bEnableCameraCollision;
 	CameraCollisionChannel = InSettings.CameraCollisionChannel;
 	CameraCollisionRadius = InSettings.CameraCollisionRadius;
@@ -1476,6 +1630,8 @@ void UVoraxiaCameraComponent::ResetTransientStateAfterSettingsApply()
 	CurrentSpeedFOVOffset = 0.0f;
 	CurrentMovementAnticipationOffset = FVector::ZeroVector;
 
+	ResetYawConstraintState();
+
 	FocusAlpha = 0.0f;
 	ResetFocusTarget();
 
@@ -1489,11 +1645,21 @@ void UVoraxiaCameraComponent::ResetTransientStateAfterSettingsApply()
 	}
 }
 
+float UVoraxiaCameraComponent::GetTargetShoulderOffset() const
+{
+	const float SafeShoulderOffset = FMath::Max(0.0f, ShoulderOffset);
+
+	return bUseRightShoulder
+		? SafeShoulderOffset
+		: -SafeShoulderOffset;
+}
+
 void UVoraxiaCameraComponent::InitializeRuntimeState()
 {
 	RuntimeCameraDistance.Initialize(CameraDistance);
 	RuntimePivotHeight.Initialize(PivotHeight);
 	RuntimeFOVOffset.Initialize(0.0f);
+	RuntimeShoulderOffset.Initialize(GetTargetShoulderOffset());
 
 	RuntimeCameraOffset.Initialize(FVector::ZeroVector);
 	RuntimePivotOffset.Initialize(FVector::ZeroVector);
@@ -1504,10 +1670,329 @@ void UVoraxiaCameraComponent::UpdateRuntimeState(const float DeltaTime)
 	RuntimeCameraDistance.Tick(DeltaTime);
 	RuntimePivotHeight.Tick(DeltaTime);
 	RuntimeFOVOffset.Tick(DeltaTime);
+	RuntimeShoulderOffset.Tick(DeltaTime);
 
 	RuntimeCameraOffset.Tick(DeltaTime);
 	RuntimePivotOffset.Tick(DeltaTime);
 }
+
+
+void UVoraxiaCameraComponent::ResetYawConstraintState()
+{
+	bYawConstraintTargetActive = false;
+
+	CurrentYawConstraintReferenceYaw = FMath::UnwindDegrees(DesiredRotation.Yaw);
+	CurrentYawConstraintMinDelta = -180.0f;
+	CurrentYawConstraintMaxDelta = 180.0f;
+	CurrentYawConstraintAlpha = 0.0f;
+
+	YawConstraintStartReferenceYaw = CurrentYawConstraintReferenceYaw;
+	YawConstraintStartMinDelta = CurrentYawConstraintMinDelta;
+	YawConstraintStartMaxDelta = CurrentYawConstraintMaxDelta;
+	YawConstraintStartAlpha = CurrentYawConstraintAlpha;
+
+	YawConstraintTargetReferenceYaw = CurrentYawConstraintReferenceYaw;
+	YawConstraintTargetMinDelta = CurrentYawConstraintMinDelta;
+	YawConstraintTargetMaxDelta = CurrentYawConstraintMaxDelta;
+	YawConstraintTargetAlpha = CurrentYawConstraintAlpha;
+
+	YawConstraintBlendTime = 0.0f;
+	YawConstraintBlendElapsed = 0.0f;
+}
+
+void UVoraxiaCameraComponent::BeginYawConstraintBlend(
+	const float ReferenceYaw,
+	const float MinYawDelta,
+	const float MaxYawDelta,
+	const float TargetAlpha,
+	const float BlendTime
+)
+{
+	YawConstraintStartReferenceYaw = CurrentYawConstraintReferenceYaw;
+	YawConstraintStartMinDelta = CurrentYawConstraintMinDelta;
+	YawConstraintStartMaxDelta = CurrentYawConstraintMaxDelta;
+	YawConstraintStartAlpha = CurrentYawConstraintAlpha;
+
+	YawConstraintTargetReferenceYaw = FMath::UnwindDegrees(ReferenceYaw);
+	YawConstraintTargetMinDelta = FMath::Clamp(
+		FMath::Min(MinYawDelta, MaxYawDelta),
+		-180.0f,
+		180.0f
+	);
+	YawConstraintTargetMaxDelta = FMath::Clamp(
+		FMath::Max(MinYawDelta, MaxYawDelta),
+		-180.0f,
+		180.0f
+	);
+	YawConstraintTargetAlpha = FMath::Clamp(TargetAlpha, 0.0f, 1.0f);
+
+	YawConstraintBlendTime = FMath::Max(0.0f, BlendTime);
+	YawConstraintBlendElapsed = 0.0f;
+	bYawConstraintTargetActive = YawConstraintTargetAlpha > KINDA_SMALL_NUMBER;
+
+	if (YawConstraintBlendTime <= KINDA_SMALL_NUMBER)
+	{
+		CurrentYawConstraintReferenceYaw = YawConstraintTargetReferenceYaw;
+		CurrentYawConstraintMinDelta = YawConstraintTargetMinDelta;
+		CurrentYawConstraintMaxDelta = YawConstraintTargetMaxDelta;
+		CurrentYawConstraintAlpha = YawConstraintTargetAlpha;
+
+		if (!bYawConstraintTargetActive)
+		{
+			CurrentYawConstraintMinDelta = -180.0f;
+			CurrentYawConstraintMaxDelta = 180.0f;
+		}
+	}
+}
+
+void UVoraxiaCameraComponent::UpdateYawConstraintState(const float DeltaTime)
+{
+	if (YawConstraintBlendTime <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	YawConstraintBlendElapsed += DeltaTime;
+
+	const float RawAlpha = FMath::Clamp(
+		YawConstraintBlendElapsed / YawConstraintBlendTime,
+		0.0f,
+		1.0f
+	);
+	const float SmoothAlpha = RawAlpha * RawAlpha * (3.0f - 2.0f * RawAlpha);
+
+	const float ReferenceYawDelta = FMath::FindDeltaAngleDegrees(
+		YawConstraintStartReferenceYaw,
+		YawConstraintTargetReferenceYaw
+	);
+
+	CurrentYawConstraintReferenceYaw = FMath::UnwindDegrees(
+		YawConstraintStartReferenceYaw + ReferenceYawDelta * SmoothAlpha
+	);
+	CurrentYawConstraintMinDelta = FMath::Lerp(
+		YawConstraintStartMinDelta,
+		YawConstraintTargetMinDelta,
+		SmoothAlpha
+	);
+	CurrentYawConstraintMaxDelta = FMath::Lerp(
+		YawConstraintStartMaxDelta,
+		YawConstraintTargetMaxDelta,
+		SmoothAlpha
+	);
+	CurrentYawConstraintAlpha = FMath::Lerp(
+		YawConstraintStartAlpha,
+		YawConstraintTargetAlpha,
+		SmoothAlpha
+	);
+
+	if (RawAlpha >= 1.0f)
+	{
+		YawConstraintBlendTime = 0.0f;
+		YawConstraintBlendElapsed = 0.0f;
+
+		if (!bYawConstraintTargetActive)
+		{
+			CurrentYawConstraintMinDelta = -180.0f;
+			CurrentYawConstraintMaxDelta = 180.0f;
+			CurrentYawConstraintAlpha = 0.0f;
+		}
+	}
+}
+
+float UVoraxiaCameraComponent::GetYawConstraintSoftZone() const
+{
+	const float ConstraintWidth = FMath::Max(
+		0.0f,
+		CurrentYawConstraintMaxDelta - CurrentYawConstraintMinDelta
+	);
+
+	return FMath::Min(
+		FMath::Max(0.0f, YawConstraintSoftZone),
+		ConstraintWidth * 0.5f
+	);
+}
+
+float UVoraxiaCameraComponent::ClampYawToConstraint(const float Yaw) const
+{
+	if (!bEnableYawConstraints || CurrentYawConstraintAlpha <= KINDA_SMALL_NUMBER)
+	{
+		return FMath::UnwindDegrees(Yaw);
+	}
+
+	const float YawDelta = FMath::FindDeltaAngleDegrees(
+		CurrentYawConstraintReferenceYaw,
+		Yaw
+	);
+	const float ClampedYawDelta = FMath::Clamp(
+		YawDelta,
+		CurrentYawConstraintMinDelta,
+		CurrentYawConstraintMaxDelta
+	);
+
+	return FMath::UnwindDegrees(
+		CurrentYawConstraintReferenceYaw + ClampedYawDelta
+	);
+}
+
+void UVoraxiaCameraComponent::ApplyYawInputWithConstraints(
+	const float YawInputDelta
+)
+{
+	if (!bEnableYawConstraints || CurrentYawConstraintAlpha <= KINDA_SMALL_NUMBER)
+	{
+		DesiredRotation.Yaw = FMath::UnwindDegrees(
+			DesiredRotation.Yaw + YawInputDelta
+		);
+		return;
+	}
+
+	const float CurrentYawDelta = FMath::FindDeltaAngleDegrees(
+		CurrentYawConstraintReferenceYaw,
+		DesiredRotation.Yaw
+	);
+
+	float ConstraintScale = 1.0f;
+	const float SoftZone = GetYawConstraintSoftZone();
+
+	if (SoftZone > KINDA_SMALL_NUMBER)
+	{
+		if (YawInputDelta < 0.0f)
+		{
+			const float DistanceToMin = FMath::Max(
+				0.0f,
+				CurrentYawDelta - CurrentYawConstraintMinDelta
+			);
+
+			if (DistanceToMin < SoftZone)
+			{
+				ConstraintScale = FMath::Clamp(
+					DistanceToMin / SoftZone,
+					0.0f,
+					1.0f
+				);
+			}
+		}
+		else if (YawInputDelta > 0.0f)
+		{
+			const float DistanceToMax = FMath::Max(
+				0.0f,
+				CurrentYawConstraintMaxDelta - CurrentYawDelta
+			);
+
+			if (DistanceToMax < SoftZone)
+			{
+				ConstraintScale = FMath::Clamp(
+					DistanceToMax / SoftZone,
+					0.0f,
+					1.0f
+				);
+			}
+		}
+
+		ConstraintScale = ConstraintScale * ConstraintScale * (
+			3.0f - 2.0f * ConstraintScale
+		);
+	}
+
+	DesiredRotation.Yaw = ClampYawToConstraint(
+		DesiredRotation.Yaw + YawInputDelta * ConstraintScale
+	);
+}
+
+void UVoraxiaCameraComponent::ApplyYawConstraints()
+{
+	if (!bEnableYawConstraints || CurrentYawConstraintAlpha <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	DesiredRotation.Yaw = ClampYawToConstraint(DesiredRotation.Yaw);
+}
+
+void UVoraxiaCameraComponent::DrawYawConstraintDebug() const
+{
+	if (!bDrawYawConstraintDebug
+		|| !bEnableYawConstraints
+		|| CurrentYawConstraintAlpha <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+
+	if (!World)
+	{
+		return;
+	}
+
+	const FVector PivotLocation = CalculatePivotLocation();
+	const float DebugLength = FMath::Max(10.0f, YawConstraintDebugDrawLength);
+
+	const float MinWorldYaw = CurrentYawConstraintReferenceYaw + CurrentYawConstraintMinDelta;
+	const float MaxWorldYaw = CurrentYawConstraintReferenceYaw + CurrentYawConstraintMaxDelta;
+
+	const FVector ReferenceDirection = FRotator(
+		0.0f,
+		CurrentYawConstraintReferenceYaw,
+		0.0f
+	).Vector();
+
+	const FVector MinDirection = FRotator(0.0f, MinWorldYaw, 0.0f).Vector();
+	const FVector MaxDirection = FRotator(0.0f, MaxWorldYaw, 0.0f).Vector();
+
+	DrawDebugDirectionalArrow(
+		World,
+		PivotLocation,
+		PivotLocation + ReferenceDirection * DebugLength,
+		24.0f,
+		FColor::Cyan,
+		false,
+		0.0f,
+		0,
+		2.0f
+	);
+
+	DrawDebugDirectionalArrow(
+		World,
+		PivotLocation,
+		PivotLocation + MinDirection * DebugLength,
+		18.0f,
+		FColor::Red,
+		false,
+		0.0f,
+		0,
+		1.5f
+	);
+
+	DrawDebugDirectionalArrow(
+		World,
+		PivotLocation,
+		PivotLocation + MaxDirection * DebugLength,
+		18.0f,
+		FColor::Red,
+		false,
+		0.0f,
+		0,
+		1.5f
+	);
+
+	DrawDebugString(
+		World,
+		PivotLocation + FVector(0.0f, 0.0f, 56.0f),
+		FString::Printf(
+			TEXT("Yaw Constraint %.0f%% | Ref %.1f | [%.1f, %.1f]"),
+			CurrentYawConstraintAlpha * 100.0f,
+			CurrentYawConstraintReferenceYaw,
+			CurrentYawConstraintMinDelta,
+			CurrentYawConstraintMaxDelta
+		),
+		nullptr,
+		FColor::Cyan,
+		0.0f,
+		true
+	);
+}
+
 
 void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 {
@@ -1536,7 +2021,9 @@ void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 	
 	if (bHasYawInput)
 	{
-		DesiredRotation.Yaw += PendingYawInput * YawInputSpeed * DeltaTime;
+		ApplyYawInputWithConstraints(
+			PendingYawInput * YawInputSpeed * DeltaTime
+		);
 	}
 
 	if (bHasPitchInput)
@@ -1547,6 +2034,7 @@ void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 
 	UpdatePitchFollow(DeltaTime);
 	UpdateYawFollow(DeltaTime);
+	ApplyYawConstraints();
 
 	DesiredRotation.Roll = 0.0f;
 
@@ -1558,6 +2046,8 @@ void UVoraxiaCameraComponent::UpdateInputRotation(const float DeltaTime)
 	UnfocusedDesiredRotation = DesiredRotation;
 
 	UpdateFocus(DeltaTime);
+
+	DrawYawConstraintDebug();
 
 	DesiredRotation.Roll = 0.0f;
 

@@ -65,6 +65,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> FocusAction;
 	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputAction> SwapShoulderAction;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement")
 	bool bCharacterFacesCameraYaw = true;
 
@@ -100,9 +103,12 @@ private:
 	void Look(const FInputActionValue& Value);
 	
 	void UpdateCharacterFacing(float DeltaTime);
+	
 	void SprintStarted(const FInputActionValue& Value);
 	void SprintEnded(const FInputActionValue& Value);
 	void UpdateSprintSpeed(float DeltaTime);
+	
+	void SwapShoulderStarted(const FInputActionValue& Value);
 	
 	bool bWantsToSprint = false;
 	bool bFocusToggleActive = false;
