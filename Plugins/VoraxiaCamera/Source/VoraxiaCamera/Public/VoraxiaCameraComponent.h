@@ -507,6 +507,35 @@ protected:
 	/** Minimum forward dot value required when bRequireFocusTargetInFront is enabled. Higher means target must be closer to the centre of view. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem", ClampMin="-1.0", ClampMax="1.0"))
 	float FocusTargetMinForwardDot = 0.15f;
+
+
+	/** Requires an unobstructed visibility trace from the active camera to a candidate focus target. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem"))
+	bool bRequireFocusTargetLineOfSight = true;
+
+	/** Collision channel used to verify that a candidate focus target is visible from the camera. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem && bRequireFocusTargetLineOfSight"))
+	TEnumAsByte<ECollisionChannel> FocusTargetLineOfSightChannel = ECC_Visibility;
+
+	/** Primary score weight for how close a candidate is to the centre of the current camera view. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem", ClampMin="0.0"))
+	float FocusTargetAlignmentScoreWeight = 1000000.0f;
+
+	/** Secondary score weight for candidate distance. This only breaks ties after view alignment has been considered. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus", meta=(EditCondition="bEnableFocusSystem", ClampMin="0.0"))
+	float FocusTargetDistanceScoreWeight = 1000.0f;
+
+	/** Logs focus-target candidate acceptance and rejection reasons while selecting a tagged focus target. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug|Focus Selection")
+	bool bLogFocusTargetSelection = false;
+
+	/** Draws temporary candidate-selection lines when choosing a tagged focus target. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug|Focus Selection")
+	bool bDrawFocusTargetSelectionDebug = false;
+
+	/** Lifetime, in seconds, of temporary focus target selection debug lines. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug|Focus Selection", meta=(EditCondition="bDrawFocusTargetSelectionDebug", ClampMin="0.0"))
+	float FocusTargetSelectionDebugDuration = 2.0f;
 	
 	/** Draws the active focus target, focus line, and focus point while the focus system is active. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Debug")
@@ -695,6 +724,19 @@ private:
 	void DestroySlateDebugPanel();
 	
 	void LogScannableFocusTarget(AActor* Actor) const;
+	bool HasFocusTargetLineOfSight(
+		const AActor* CandidateActor,
+		const FVector& TraceStart,
+		const FVector& FocusLocation,
+		FHitResult* OutBlockingHit = nullptr
+	) const;
+	float CalculateFocusTargetSelectionScore(float ForwardDot, float DistanceSquared) const;
+	void DrawFocusTargetSelectionDebug(
+		const FVector& StartLocation,
+		const FVector& TargetLocation,
+		const FColor& Color,
+		const FString& Label
+	) const;
 	void UpdateFocus(float DeltaTime);
 	void BeginFocusBlend(float TargetAlpha, float BlendTime);
 	bool TryGetFocusLocation(FVector& OutFocusLocation) const;

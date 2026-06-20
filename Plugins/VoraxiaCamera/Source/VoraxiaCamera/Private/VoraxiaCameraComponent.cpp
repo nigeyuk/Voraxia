@@ -6,6 +6,8 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "Camera/CameraComponent.h"
+#include "CollisionQueryParams.h"
+#include "Components/PrimitiveComponent.h"
 #include "Curves/CurveFloat.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Engine.h"
@@ -1182,30 +1184,27 @@ void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
 	}
 
 	const FVector SearchOrigin = Owner->GetActorLocation();
+	const FVector TraceStart = TargetCamera
+		? TargetCamera->GetComponentLocation()
+		: CalculatePivotLocation();
 
-	const FVector ViewForward =
-		TargetCamera
-			? TargetCamera->GetForwardVector().GetSafeNormal()
-			: SmoothedRotation.Vector().GetSafeNormal();
+	const FVector ViewForward = TargetCamera
+		? TargetCamera->GetForwardVector().GetSafeNormal()
+		: SmoothedRotation.Vector().GetSafeNormal();
 
-	const float MaxDistanceSquared =
-		FocusTargetSearchDistance > 0.0f
-			? FMath::Square(FocusTargetSearchDistance)
-			: TNumericLimits<float>::Max();
+	const float MaxDistanceSquared = FocusTargetSearchDistance > 0.0f
+		? FMath::Square(FocusTargetSearchDistance)
+		: TNumericLimits<float>::Max();
 
 	AActor* BestActor = nullptr;
+	FVector BestFocusLocation = FVector::ZeroVector;
 	float BestScore = TNumericLimits<float>::Max();
 
 	for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
 	{
 		AActor* Actor = *ActorIt;
 
-		if (!Actor || Actor == Owner)
-		{
-			continue;
-		}
-
-		if (!Actor->ActorHasTag(DefaultFocusActorTag))
+		if (!Actor || Actor == Owner || !Actor->ActorHasTag(DefaultFocusActorTag))
 		{
 			continue;
 		}
@@ -1216,6 +1215,23 @@ void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
 		{
 			if (!IVoraxiaFocusableInterface::Execute_CanBeFocused(Actor, Owner))
 			{
+				if (bLogFocusTargetSelection)
+				{
+					UE_LOG(
+						LogVoraxiaCamera,
+						Log,
+						TEXT("Voraxia focus selection rejected '%s': CanBeFocused returned false."),
+						*GetNameSafe(Actor)
+					);
+				}
+
+				DrawFocusTargetSelectionDebug(
+					TraceStart,
+					FocusLocation,
+					FColor::Red,
+					TEXT("Rejected: Not Focusable")
+				);
+
 				continue;
 			}
 
@@ -1227,33 +1243,118 @@ void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
 
 		if (DistanceSquared > MaxDistanceSquared)
 		{
+			if (bLogFocusTargetSelection)
+			{
+				UE_LOG(
+					LogVoraxiaCamera,
+					Log,
+					TEXT("Voraxia focus selection rejected '%s': %.1f units exceeds search distance %.1f."),
+					*GetNameSafe(Actor),
+					FMath::Sqrt(DistanceSquared),
+					FocusTargetSearchDistance
+				);
+			}
+
+			DrawFocusTargetSelectionDebug(
+				TraceStart,
+				FocusLocation,
+				FColor::Red,
+				TEXT("Rejected: Out Of Range")
+			);
+
 			continue;
 		}
 
 		const FVector DirectionToActor = ToActor.GetSafeNormal();
+		const float ForwardDot = FVector::DotProduct(ViewForward, DirectionToActor);
 
-		if (bRequireFocusTargetInFront)
+		if (bRequireFocusTargetInFront && ForwardDot < FocusTargetMinForwardDot)
 		{
-			const float ForwardDot = FVector::DotProduct(ViewForward, DirectionToActor);
-
-			if (ForwardDot < FocusTargetMinForwardDot)
+			if (bLogFocusTargetSelection)
 			{
-				continue;
+				UE_LOG(
+					LogVoraxiaCamera,
+					Log,
+					TEXT("Voraxia focus selection rejected '%s': forward dot %.3f is below threshold %.3f."),
+					*GetNameSafe(Actor),
+					ForwardDot,
+					FocusTargetMinForwardDot
+				);
 			}
+
+			DrawFocusTargetSelectionDebug(
+				TraceStart,
+				FocusLocation,
+				FColor::Red,
+				TEXT("Rejected: Outside View")
+			);
+
+			continue;
 		}
 
-		const float Score = DistanceSquared;
+		FHitResult BlockingHit;
+
+		if (bRequireFocusTargetLineOfSight && !HasFocusTargetLineOfSight(
+			Actor,
+			TraceStart,
+			FocusLocation,
+			&BlockingHit
+		))
+		{
+			if (bLogFocusTargetSelection)
+			{
+				UE_LOG(
+					LogVoraxiaCamera,
+					Log,
+					TEXT("Voraxia focus selection rejected '%s': line of sight blocked by '%s'."),
+					*GetNameSafe(Actor),
+					*GetNameSafe(BlockingHit.GetActor())
+				);
+			}
+
+			DrawFocusTargetSelectionDebug(
+				TraceStart,
+				FocusLocation,
+				FColor::Red,
+				TEXT("Rejected: Blocked")
+			);
+
+			continue;
+		}
+
+		const float Score = CalculateFocusTargetSelectionScore(ForwardDot, DistanceSquared);
+
+		if (bLogFocusTargetSelection)
+		{
+			UE_LOG(
+				LogVoraxiaCamera,
+				Log,
+				TEXT("Voraxia focus selection accepted '%s': dot %.3f, distance %.1f, score %.2f."),
+				*GetNameSafe(Actor),
+				ForwardDot,
+				FMath::Sqrt(DistanceSquared),
+				Score
+			);
+		}
+
+		DrawFocusTargetSelectionDebug(
+			TraceStart,
+			FocusLocation,
+			FColor::Yellow,
+			TEXT("Candidate")
+		);
 
 		if (Score < BestScore)
 		{
 			BestScore = Score;
 			BestActor = Actor;
+			BestFocusLocation = FocusLocation;
 		}
 	}
 
 	if (!BestActor)
 	{
-		UE_LOG(
+	UE_LOG(
 			LogVoraxiaCamera,
 			Warning,
 			TEXT("Voraxia camera could not find a valid focus actor with tag '%s'."),
@@ -1268,12 +1369,154 @@ void UVoraxiaCameraComponent::FocusDefaultTaggedActor(const float BlendTime)
 		BlendTime >= 0.0f ? BlendTime : DefaultFocusBlendInTime
 	);
 
+	DrawFocusTargetSelectionDebug(
+		TraceStart,
+		BestFocusLocation,
+		FColor::Green,
+		TEXT("Selected")
+	);
+
 	UE_LOG(
 		LogVoraxiaCamera,
 		Log,
-		TEXT("Voraxia camera focusing tagged actor '%s' with tag '%s'."),
+		TEXT("Voraxia camera focused tagged actor '%s' with tag '%s'. Score: %.2f."),
 		*GetNameSafe(BestActor),
-		*DefaultFocusActorTag.ToString()
+		*DefaultFocusActorTag.ToString(),
+		BestScore
+	);
+}
+
+bool UVoraxiaCameraComponent::HasFocusTargetLineOfSight(
+	const AActor* CandidateActor,
+	const FVector& TraceStart,
+	const FVector& FocusLocation,
+	FHitResult* OutBlockingHit
+) const
+{
+	if (!bRequireFocusTargetLineOfSight)
+	{
+		return true;
+	}
+
+	UWorld* World = GetWorld();
+
+	if (!World || !CandidateActor)
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(
+		SCENE_QUERY_STAT(VoraxiaFocusTargetLineOfSight),
+		false
+	);
+
+	QueryParams.AddIgnoredActor(GetOwner());
+
+	FHitResult Hit;
+
+	const bool bHit = World->LineTraceSingleByChannel(
+		Hit,
+		TraceStart,
+		FocusLocation,
+		FocusTargetLineOfSightChannel,
+		QueryParams
+	);
+
+	if (!bHit)
+	{
+		return true;
+	}
+
+	const bool bHitCandidateActor = Hit.GetActor() == CandidateActor;
+	const bool bHitCandidateComponent = Hit.GetComponent()
+		&& Hit.GetComponent()->GetOwner() == CandidateActor;
+
+	if (bHitCandidateActor || bHitCandidateComponent)
+	{
+		return true;
+	}
+
+	if (OutBlockingHit)
+	{
+		*OutBlockingHit = Hit;
+	}
+
+	return false;
+}
+
+float UVoraxiaCameraComponent::CalculateFocusTargetSelectionScore(
+	const float ForwardDot,
+	const float DistanceSquared
+) const
+{
+	const float AlignmentPenalty = 1.0f - FMath::Clamp(ForwardDot, -1.0f, 1.0f);
+	const float AlignmentScore = AlignmentPenalty * FMath::Max(0.0f, FocusTargetAlignmentScoreWeight);
+
+	const float DistanceReference = FocusTargetSearchDistance > KINDA_SMALL_NUMBER
+		? FocusTargetSearchDistance
+		: 10000.0f;
+
+	const float NormalizedDistance = FMath::Clamp(
+		DistanceSquared / FMath::Square(DistanceReference),
+		0.0f,
+		1.0f
+	);
+
+	const float DistanceScore = NormalizedDistance * FMath::Max(0.0f, FocusTargetDistanceScoreWeight);
+
+	return AlignmentScore + DistanceScore;
+}
+
+void UVoraxiaCameraComponent::DrawFocusTargetSelectionDebug(
+	const FVector& StartLocation,
+	const FVector& TargetLocation,
+	const FColor& Color,
+	const FString& Label
+) const
+{
+	if (!bDrawFocusTargetSelectionDebug)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+
+	if (!World)
+	{
+		return;
+	}
+
+	DrawDebugLine(
+		World,
+		StartLocation,
+		TargetLocation,
+		Color,
+		false,
+		FocusTargetSelectionDebugDuration,
+		0,
+		1.5f
+	);
+
+	DrawDebugSphere(
+		World,
+		TargetLocation,
+		18.0f,
+		12,
+		Color,
+		false,
+		FocusTargetSelectionDebugDuration,
+		0,
+		1.5f
+	);
+
+	DrawDebugString(
+		World,
+		TargetLocation + FVector(0.0f, 0.0f, 28.0f),
+		Label,
+		nullptr,
+		Color,
+		FocusTargetSelectionDebugDuration,
+		true
 	);
 }
 
