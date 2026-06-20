@@ -10,6 +10,7 @@
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
 #include "VoraxiaCameraComponent.h"
+#include "VoraxiaCameraOcclusionDitherComponent.h"
 
 AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
 {
@@ -36,6 +37,11 @@ AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
 	CameraComponent->bUsePawnControlRotation = false;
 
 	VoraxiaCameraComponent = CreateDefaultSubobject<UVoraxiaCameraComponent>(TEXT("VoraxiaCameraComponent"));
+
+	CameraOcclusionDitherComponent =
+		CreateDefaultSubobject<UVoraxiaCameraOcclusionDitherComponent>(
+			TEXT("CameraOcclusionDitherComponent")
+		);
 }
 
 void AVoraxiaPlayerCharacter::Tick(const float DeltaTime)
@@ -80,6 +86,11 @@ void AVoraxiaPlayerCharacter::PawnClientRestart()
 	if (VoraxiaCameraComponent && CameraComponent)
 	{
 		VoraxiaCameraComponent->SetTargetCamera(CameraComponent);
+	}
+
+	if (CameraOcclusionDitherComponent)
+	{
+		CameraOcclusionDitherComponent->SetCameraComponent(VoraxiaCameraComponent);
 	}
 }
 

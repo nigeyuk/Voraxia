@@ -10,6 +10,7 @@ class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
 class UVoraxiaCameraComponent;
+class UVoraxiaCameraOcclusionDitherComponent;
 
 struct FInputActionValue;
 
@@ -36,6 +37,9 @@ public:
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
 	TObjectPtr<UCameraComponent> CameraComponent;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
+	TObjectPtr<UVoraxiaCameraOcclusionDitherComponent> CameraOcclusionDitherComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
 	TObjectPtr<UVoraxiaCameraComponent> VoraxiaCameraComponent;

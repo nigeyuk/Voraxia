@@ -6,10 +6,14 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/CameraShakeBase.h"
+#include "Camera/PlayerCameraManager.h"
 #include "CollisionQueryParams.h"
 #include "Components/PrimitiveComponent.h"
 #include "Curves/CurveFloat.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Widgets/SBoxPanel.h"
@@ -18,6 +22,8 @@
 #include "Interfaces/VoraxiaFocusableInterface.h"
 #include "Interfaces/VoraxiaScannableInterface.h"
 #include "VoraxiaCameraLog.h"
+#include "VoraxiaCameraOcclusionDitherComponent.h"
+#include "VoraxiaCameraSettingsAsset.h"
 
 void FVoraxiaCameraRuntimeFloat::Initialize(const float InValue)
 {
@@ -214,6 +220,7 @@ void UVoraxiaCameraComponent::BeginPlay()
 
 void UVoraxiaCameraComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopAllCameraShakes(true);
 	DestroySlateDebugPanel();
 
 	Super::EndPlay(EndPlayReason);
@@ -236,6 +243,7 @@ void UVoraxiaCameraComponent::TickComponent(
 	UpdateInputRotation(DeltaTime);
 	UpdateDynamicModifiers(DeltaTime);
 	UpdateMovementAnticipation(DeltaTime);
+	UpdateCameraShakeSystem(DeltaTime);
 	ApplyCameraTransform(DeltaTime);
 }
 
@@ -254,6 +262,274 @@ void UVoraxiaCameraComponent::SetTargetCamera(UCameraComponent* InTargetCamera)
 UCameraComponent* UVoraxiaCameraComponent::GetTargetCamera() const
 {
 	return TargetCamera;
+}
+
+
+FVoraxiaCameraShakeHandle UVoraxiaCameraComponent::PlayCameraShake(
+	TSubclassOf<UCameraShakeBase> ShakeClass,
+	const float Scale,
+	const ECameraShakePlaySpace PlaySpace,
+	const FRotator UserPlaySpaceRotation
+)
+{
+	FVoraxiaCameraShakeHandle InvalidHandle;
+
+	if (!ShakeClass)
+	{
+		UE_LOG(LogVoraxiaCamera, Warning, TEXT("Voraxia camera shake request ignored because no shake class was supplied."));
+		return InvalidHandle;
+	}
+
+	APlayerCameraManager* CameraManager = ResolvePlayerCameraManager();
+
+	if (!CameraManager)
+	{
+		UE_LOG(
+			LogVoraxiaCamera,
+			Warning,
+			TEXT("Voraxia camera shake request for '%s' ignored because owner '%s' has no local PlayerCameraManager."),
+			*GetNameSafe(ShakeClass.Get()),
+			*GetNameSafe(GetOwner())
+		);
+		return InvalidHandle;
+	}
+
+	UCameraShakeBase* Instance = CameraManager->StartCameraShake(
+		ShakeClass,
+		FMath::Max(0.0f, Scale),
+		PlaySpace,
+		UserPlaySpaceRotation
+	);
+
+	if (!Instance)
+	{
+		UE_LOG(LogVoraxiaCamera, Warning, TEXT("Voraxia camera shake '%s' failed to start."), *GetNameSafe(ShakeClass.Get()));
+		return InvalidHandle;
+	}
+
+	for (const TPair<int32, FActiveCameraShake>& Pair : ActiveCameraShakes)
+	{
+		if (Pair.Value.Instance.Get() == Instance)
+		{
+			// A single-instance shake class may reuse an existing instance. Preserve its original handle.
+			return Pair.Value.Handle;
+		}
+	}
+
+	FActiveCameraShake& ActiveShake = ActiveCameraShakes.Add(NextCameraShakeHandleId);
+	ActiveShake.Handle.Id = NextCameraShakeHandleId++;
+	ActiveShake.Handle.ShakeName = ShakeClass.Get()->GetFName();
+	ActiveShake.Instance = Instance;
+	ActiveShake.ShakeClass = ShakeClass;
+
+	OnCameraShakeStarted.Broadcast(ActiveShake.Handle, FMath::Max(0.0f, Scale));
+
+	UE_LOG(
+		LogVoraxiaCamera,
+		Verbose,
+		TEXT("Voraxia camera shake started. Handle=%d Shake='%s' Scale=%.2f."),
+		ActiveShake.Handle.Id,
+		*ActiveShake.Handle.ShakeName.ToString(),
+		Scale
+	);
+
+	return ActiveShake.Handle;
+}
+
+bool UVoraxiaCameraComponent::StopCameraShake(
+	const FVoraxiaCameraShakeHandle ShakeHandle,
+	const bool bImmediately
+)
+{
+	if (!ShakeHandle.IsValid() || !ActiveCameraShakes.Contains(ShakeHandle.Id))
+	{
+		return false;
+	}
+
+	RequestStopCameraShake(ShakeHandle.Id, bImmediately);
+	return true;
+}
+
+void UVoraxiaCameraComponent::StopAllCameraShakes(const bool bImmediately)
+{
+	TArray<int32> HandleIds;
+	ActiveCameraShakes.GetKeys(HandleIds);
+
+	for (const int32 HandleId : HandleIds)
+	{
+		RequestStopCameraShake(HandleId, bImmediately);
+	}
+}
+
+bool UVoraxiaCameraComponent::IsCameraShakePlaying(const FVoraxiaCameraShakeHandle ShakeHandle) const
+{
+	const FActiveCameraShake* ActiveShake = ActiveCameraShakes.Find(ShakeHandle.Id);
+
+	if (!ActiveShake)
+	{
+		return false;
+	}
+
+	UCameraShakeBase* Instance = ActiveShake->Instance.Get();
+	return Instance && Instance->IsActive() && !Instance->IsFinished();
+}
+
+int32 UVoraxiaCameraComponent::GetActiveCameraShakeCount() const
+{
+	return ActiveCameraShakes.Num();
+}
+
+APlayerCameraManager* UVoraxiaCameraComponent::ResolvePlayerCameraManager() const
+{
+	const APawn* OwningPawn = Cast<APawn>(GetOwner());
+	const APlayerController* PlayerController = OwningPawn
+		? Cast<APlayerController>(OwningPawn->GetController())
+		: nullptr;
+
+	return PlayerController ? PlayerController->PlayerCameraManager : nullptr;
+}
+
+void UVoraxiaCameraComponent::UpdateCameraShakeSystem(const float DeltaTime)
+{
+	UpdateActiveCameraShakes();
+	UpdateAutomaticCameraShakes(DeltaTime);
+}
+
+void UVoraxiaCameraComponent::UpdateActiveCameraShakes()
+{
+	for (auto It = ActiveCameraShakes.CreateIterator(); It; ++It)
+	{
+		const FActiveCameraShake& ActiveShake = It.Value();
+		UCameraShakeBase* Instance = ActiveShake.Instance.Get();
+
+		if (Instance && Instance->IsActive() && !Instance->IsFinished())
+		{
+			continue;
+		}
+
+		NotifyCameraShakeStopped(ActiveShake, ActiveShake.bStopRequested);
+
+		if (IdleCameraShakeHandle.Id == ActiveShake.Handle.Id)
+		{
+			IdleCameraShakeHandle = FVoraxiaCameraShakeHandle();
+		}
+
+		if (MovementCameraShakeHandle.Id == ActiveShake.Handle.Id)
+		{
+			MovementCameraShakeHandle = FVoraxiaCameraShakeHandle();
+		}
+
+		It.RemoveCurrent();
+	}
+}
+
+void UVoraxiaCameraComponent::UpdateAutomaticCameraShakes(const float DeltaTime)
+{
+	const float OwnerSpeed = GetOwnerMovementSpeed2D();
+	const bool bShouldIdleShake = bEnableIdleCameraShake
+		&& IdleCameraShakeClass
+		&& OwnerSpeed <= FMath::Max(0.0f, IdleCameraShakeMaxSpeed);
+
+	if (bShouldIdleShake)
+	{
+		if (!IsCameraShakePlaying(IdleCameraShakeHandle))
+		{
+			IdleCameraShakeHandle = PlayCameraShake(
+				IdleCameraShakeClass,
+				IdleCameraShakeScale,
+				ECameraShakePlaySpace::CameraLocal
+			);
+		}
+	}
+	else if (IdleCameraShakeHandle.IsValid())
+	{
+		StopCameraShake(IdleCameraShakeHandle, false);
+	}
+
+	const float SafeMinSpeed = FMath::Max(0.0f, MovementCameraShakeMinSpeed);
+	const float SafeMaxSpeed = FMath::Max(SafeMinSpeed + KINDA_SMALL_NUMBER, MovementCameraShakeMaxSpeed);
+	const bool bShouldMovementShake = bEnableMovementCameraShake
+		&& MovementCameraShakeClass
+		&& OwnerSpeed >= SafeMinSpeed;
+
+	const float TargetMovementScale = bShouldMovementShake
+		? FMath::Lerp(
+			MovementCameraShakeMinScale,
+			MovementCameraShakeMaxScale,
+			FMath::Clamp((OwnerSpeed - SafeMinSpeed) / (SafeMaxSpeed - SafeMinSpeed), 0.0f, 1.0f)
+		)
+		: 0.0f;
+
+	CurrentMovementCameraShakeScale = FMath::FInterpTo(
+		CurrentMovementCameraShakeScale,
+		TargetMovementScale,
+		FMath::Max(0.0f, DeltaTime),
+		FMath::Max(0.0f, MovementCameraShakeScaleInterpSpeed)
+	);
+
+	if (bShouldMovementShake && !IsCameraShakePlaying(MovementCameraShakeHandle))
+	{
+		MovementCameraShakeHandle = PlayCameraShake(
+			MovementCameraShakeClass,
+			CurrentMovementCameraShakeScale,
+			ECameraShakePlaySpace::CameraLocal
+		);
+	}
+
+	if (FActiveCameraShake* MovementShake = ActiveCameraShakes.Find(MovementCameraShakeHandle.Id))
+	{
+		if (UCameraShakeBase* Instance = MovementShake->Instance.Get())
+		{
+			Instance->ShakeScale = CurrentMovementCameraShakeScale;
+		}
+	}
+
+	if (!bShouldMovementShake && MovementCameraShakeHandle.IsValid())
+	{
+		StopCameraShake(MovementCameraShakeHandle, false);
+	}
+}
+
+void UVoraxiaCameraComponent::RequestStopCameraShake(const int32 HandleId, const bool bImmediately)
+{
+	FActiveCameraShake* ActiveShake = ActiveCameraShakes.Find(HandleId);
+
+	if (!ActiveShake || ActiveShake->bStopRequested)
+	{
+		return;
+	}
+
+	ActiveShake->bStopRequested = true;
+	ActiveShake->bStopWasImmediate = bImmediately;
+
+	if (UCameraShakeBase* Instance = ActiveShake->Instance.Get())
+	{
+		if (APlayerCameraManager* CameraManager = ResolvePlayerCameraManager())
+		{
+			CameraManager->StopCameraShake(Instance, bImmediately);
+		}
+		else
+		{
+			Instance->StopShake(bImmediately);
+		}
+	}
+}
+
+void UVoraxiaCameraComponent::NotifyCameraShakeStopped(
+	const FActiveCameraShake& ActiveShake,
+	const bool bInterrupted
+)
+{
+	OnCameraShakeStopped.Broadcast(ActiveShake.Handle, bInterrupted);
+
+	UE_LOG(
+		LogVoraxiaCamera,
+		Verbose,
+		TEXT("Voraxia camera shake stopped. Handle=%d Shake='%s' Interrupted=%s."),
+		ActiveShake.Handle.Id,
+		*ActiveShake.Handle.ShakeName.ToString(),
+		bInterrupted ? TEXT("true") : TEXT("false")
+	);
 }
 
 void UVoraxiaCameraComponent::AddYawInput(const float Value)
@@ -885,6 +1161,332 @@ FString UVoraxiaCameraComponent::GetCameraDebugSummary() const
 		GetCurrentDynamicFOVOffset(),
 		CalculateFinalFOV()
 	);
+}
+
+bool UVoraxiaCameraComponent::CaptureCurrentSettingsToAsset(
+	UVoraxiaCameraSettingsAsset* SettingsAsset
+)
+{
+	if (!SettingsAsset)
+	{
+		UE_LOG(LogVoraxiaCamera, Warning, TEXT("Voraxia camera settings capture failed because no settings asset was supplied."));
+		return false;
+	}
+
+#if WITH_EDITOR
+	SettingsAsset->Modify();
+
+	PopulatePersistentSettings(SettingsAsset->CameraSettings);
+	SettingsAsset->bIncludeOcclusionDitherSettings = false;
+
+	if (AActor* Owner = GetOwner())
+	{
+		if (UVoraxiaCameraOcclusionDitherComponent* DitherComponent = Owner->FindComponentByClass<UVoraxiaCameraOcclusionDitherComponent>())
+		{
+			DitherComponent->CaptureSettings(SettingsAsset->OcclusionDitherSettings);
+			SettingsAsset->bIncludeOcclusionDitherSettings = true;
+		}
+	}
+
+	SettingsAsset->MarkPackageDirty();
+	AssignedSettingsAsset = SettingsAsset;
+	OnCameraSettingsCaptured.Broadcast(SettingsAsset);
+
+	UE_LOG(LogVoraxiaCamera, Log, TEXT("Voraxia camera settings captured into '%s'."), *GetNameSafe(SettingsAsset));
+	return true;
+#else
+	UE_LOG(LogVoraxiaCamera, Warning, TEXT("Voraxia camera settings capture is editor-only because packaged builds cannot persist Data Assets."));
+	return false;
+#endif
+}
+
+bool UVoraxiaCameraComponent::ApplyCameraSettingsAsset(
+	UVoraxiaCameraSettingsAsset* SettingsAsset
+)
+{
+	if (!SettingsAsset)
+	{
+		UE_LOG(LogVoraxiaCamera, Warning, TEXT("Voraxia camera settings apply failed because no settings asset was supplied."));
+		return false;
+	}
+
+	ApplyPersistentSettings(SettingsAsset->CameraSettings);
+
+	if (SettingsAsset->bIncludeOcclusionDitherSettings)
+	{
+		if (AActor* Owner = GetOwner())
+		{
+			if (UVoraxiaCameraOcclusionDitherComponent* DitherComponent = Owner->FindComponentByClass<UVoraxiaCameraOcclusionDitherComponent>())
+			{
+				DitherComponent->ApplySettings(SettingsAsset->OcclusionDitherSettings);
+			}
+		}
+	}
+
+	AssignedSettingsAsset = SettingsAsset;
+	OnCameraSettingsApplied.Broadcast(SettingsAsset);
+
+	UE_LOG(LogVoraxiaCamera, Log, TEXT("Voraxia camera settings applied from '%s'."), *GetNameSafe(SettingsAsset));
+	return true;
+}
+
+void UVoraxiaCameraComponent::CaptureCurrentSettingsToAssignedAsset()
+{
+	CaptureCurrentSettingsToAsset(AssignedSettingsAsset);
+}
+
+void UVoraxiaCameraComponent::ApplyAssignedSettingsAsset()
+{
+	ApplyCameraSettingsAsset(AssignedSettingsAsset);
+}
+
+void UVoraxiaCameraComponent::PopulatePersistentSettings(
+	FVoraxiaCameraPersistentSettings& OutSettings
+) const
+{
+	OutSettings.bAutoFindCameraComponent = bAutoFindCameraComponent;
+	OutSettings.CameraDistance = CameraDistance;
+	OutSettings.PivotHeight = PivotHeight;
+	OutSettings.AdditionalCameraOffset = AdditionalCameraOffset;
+	OutSettings.AdditionalPivotOffset = AdditionalPivotOffset;
+	OutSettings.bClampCameraOffsetWithinDistance = bClampCameraOffsetWithinDistance;
+	OutSettings.bUseTargetCameraFOVAsBase = bUseTargetCameraFOVAsBase;
+	OutSettings.BaseFOV = BaseFOV;
+	OutSettings.MinFOV = MinFOV;
+	OutSettings.MaxFOV = MaxFOV;
+	OutSettings.InitialPitch = InitialPitch;
+	OutSettings.MinPitch = MinPitch;
+	OutSettings.MaxPitch = MaxPitch;
+	OutSettings.YawInputSpeed = YawInputSpeed;
+	OutSettings.PitchInputSpeed = PitchInputSpeed;
+	OutSettings.bInvertPitchInput = bInvertPitchInput;
+	OutSettings.bEnableRotationLag = bEnableRotationLag;
+	OutSettings.RotationLagSpeed = RotationLagSpeed;
+	OutSettings.LookInputDeadZone = LookInputDeadZone;
+	OutSettings.bEnableCameraCollision = bEnableCameraCollision;
+	OutSettings.CameraCollisionChannel = CameraCollisionChannel;
+	OutSettings.CameraCollisionRadius = CameraCollisionRadius;
+	OutSettings.MinDistanceFromPivot = MinDistanceFromPivot;
+	OutSettings.CollisionProbeStartOffset = CollisionProbeStartOffset;
+	OutSettings.CollisionSafetyPadding = CollisionSafetyPadding;
+	OutSettings.CollisionCompressionSpeed = CollisionCompressionSpeed;
+	OutSettings.CollisionRecoverySpeed = CollisionRecoverySpeed;
+	OutSettings.bEnablePredictiveAvoidance = bEnablePredictiveAvoidance;
+	OutSettings.FeelerYawOffset = FeelerYawOffset;
+	OutSettings.FeelerPairs = FeelerPairs;
+	OutSettings.FeelerProbeRadius = FeelerProbeRadius;
+	OutSettings.bEnableMovementAnticipation = bEnableMovementAnticipation;
+	OutSettings.MovementAnticipationForwardOffset = MovementAnticipationForwardOffset;
+	OutSettings.MovementAnticipationBackwardOffset = MovementAnticipationBackwardOffset;
+	OutSettings.MovementAnticipationSideOffset = MovementAnticipationSideOffset;
+	OutSettings.MovementAnticipationFullSpeed = MovementAnticipationFullSpeed;
+	OutSettings.MovementAnticipationInterpSpeed = MovementAnticipationInterpSpeed;
+	OutSettings.MovementAnticipationReturnSpeed = MovementAnticipationReturnSpeed;
+	OutSettings.MovementAnticipationDeadZone = MovementAnticipationDeadZone;
+	OutSettings.bReduceMovementAnticipationWhileLooking = bReduceMovementAnticipationWhileLooking;
+	OutSettings.LookInputAnticipationMultiplier = LookInputAnticipationMultiplier;
+	OutSettings.MovementAnticipationLookInputThreshold = MovementAnticipationLookInputThreshold;
+	OutSettings.bEnablePitchDistanceModifier = bEnablePitchDistanceModifier;
+	OutSettings.PitchDistanceAtMinPitchOffset = PitchDistanceAtMinPitchOffset;
+	OutSettings.PitchDistanceAtMaxPitchOffset = PitchDistanceAtMaxPitchOffset;
+	OutSettings.bEnablePitchFOVModifier = bEnablePitchFOVModifier;
+	OutSettings.PitchFOVAtMinPitchOffset = PitchFOVAtMinPitchOffset;
+	OutSettings.PitchFOVAtMaxPitchOffset = PitchFOVAtMaxPitchOffset;
+	OutSettings.PitchModifierInterpSpeed = PitchModifierInterpSpeed;
+	OutSettings.bEnableSpeedDistanceModifier = bEnableSpeedDistanceModifier;
+	OutSettings.SpeedDistanceOffset = SpeedDistanceOffset;
+	OutSettings.bEnableSpeedFOVModifier = bEnableSpeedFOVModifier;
+	OutSettings.SpeedFOVOffset = SpeedFOVOffset;
+	OutSettings.SpeedModifierFullSpeed = SpeedModifierFullSpeed;
+	OutSettings.SpeedModifierInterpSpeed = SpeedModifierInterpSpeed;
+	OutSettings.bEnableFocusSystem = bEnableFocusSystem;
+	OutSettings.DefaultFocusActorTag = DefaultFocusActorTag;
+	OutSettings.DefaultFocusBlendInTime = DefaultFocusBlendInTime;
+	OutSettings.DefaultFocusBlendOutTime = DefaultFocusBlendOutTime;
+	OutSettings.bClampFocusPitchToCameraLimits = bClampFocusPitchToCameraLimits;
+	OutSettings.FocusMinimumTargetDistance = FocusMinimumTargetDistance;
+	OutSettings.FocusTargetSearchDistance = FocusTargetSearchDistance;
+	OutSettings.bRequireFocusTargetInFront = bRequireFocusTargetInFront;
+	OutSettings.FocusTargetMinForwardDot = FocusTargetMinForwardDot;
+	OutSettings.bRequireFocusTargetLineOfSight = bRequireFocusTargetLineOfSight;
+	OutSettings.FocusTargetLineOfSightChannel = FocusTargetLineOfSightChannel;
+	OutSettings.FocusTargetAlignmentScoreWeight = FocusTargetAlignmentScoreWeight;
+	OutSettings.FocusTargetDistanceScoreWeight = FocusTargetDistanceScoreWeight;
+	OutSettings.bLogFocusTargetSelection = bLogFocusTargetSelection;
+	OutSettings.bDrawFocusTargetSelectionDebug = bDrawFocusTargetSelectionDebug;
+	OutSettings.FocusTargetSelectionDebugDuration = FocusTargetSelectionDebugDuration;
+	OutSettings.bDrawFocusDebug = bDrawFocusDebug;
+	OutSettings.bDrawCameraCollisionDebug = bDrawCameraCollisionDebug;
+	OutSettings.bDrawCameraStateDebug = bDrawCameraStateDebug;
+	OutSettings.bShowSlateDebugPanel = bShowSlateDebugPanel;
+	OutSettings.SlateDebugPanelWidth = SlateDebugPanelWidth;
+	OutSettings.SlateDebugPanelZOrder = SlateDebugPanelZOrder;
+	OutSettings.bEnablePitchConstraints = bEnablePitchConstraints;
+	OutSettings.PitchConstraintTolerance = PitchConstraintTolerance;
+	OutSettings.bEnablePitchMovementFollow = bEnablePitchMovementFollow;
+	OutSettings.RestingCameraPitch = RestingCameraPitch;
+	OutSettings.PitchFollowSpeed = PitchFollowSpeed;
+	OutSettings.PitchFollowTimeThreshold = PitchFollowTimeThreshold;
+	OutSettings.PitchFollowAngleThreshold = PitchFollowAngleThreshold;
+	OutSettings.PitchFollowMinSpeedThreshold = PitchFollowMinSpeedThreshold;
+	OutSettings.bEnableYawMovementFollow = bEnableYawMovementFollow;
+	OutSettings.YawFollowSpeed = YawFollowSpeed;
+	OutSettings.YawFollowTimeThreshold = YawFollowTimeThreshold;
+	OutSettings.YawFollowAngleThreshold = YawFollowAngleThreshold;
+	OutSettings.YawFollowMinSpeedThreshold = YawFollowMinSpeedThreshold;
+	OutSettings.bYawFollowOnlyForwardMovement = bYawFollowOnlyForwardMovement;
+	OutSettings.bEnableIdleCameraShake = bEnableIdleCameraShake;
+	OutSettings.IdleCameraShakeClass = IdleCameraShakeClass;
+	OutSettings.IdleCameraShakeScale = IdleCameraShakeScale;
+	OutSettings.IdleCameraShakeMaxSpeed = IdleCameraShakeMaxSpeed;
+	OutSettings.bEnableMovementCameraShake = bEnableMovementCameraShake;
+	OutSettings.MovementCameraShakeClass = MovementCameraShakeClass;
+	OutSettings.MovementCameraShakeMinSpeed = MovementCameraShakeMinSpeed;
+	OutSettings.MovementCameraShakeMaxSpeed = MovementCameraShakeMaxSpeed;
+	OutSettings.MovementCameraShakeMinScale = MovementCameraShakeMinScale;
+	OutSettings.MovementCameraShakeMaxScale = MovementCameraShakeMaxScale;
+	OutSettings.MovementCameraShakeScaleInterpSpeed = MovementCameraShakeScaleInterpSpeed;
+}
+
+void UVoraxiaCameraComponent::ApplyPersistentSettings(
+	const FVoraxiaCameraPersistentSettings& InSettings
+)
+{
+	bAutoFindCameraComponent = InSettings.bAutoFindCameraComponent;
+	CameraDistance = InSettings.CameraDistance;
+	PivotHeight = InSettings.PivotHeight;
+	AdditionalCameraOffset = InSettings.AdditionalCameraOffset;
+	AdditionalPivotOffset = InSettings.AdditionalPivotOffset;
+	bClampCameraOffsetWithinDistance = InSettings.bClampCameraOffsetWithinDistance;
+	bUseTargetCameraFOVAsBase = InSettings.bUseTargetCameraFOVAsBase;
+	BaseFOV = InSettings.BaseFOV;
+	MinFOV = InSettings.MinFOV;
+	MaxFOV = InSettings.MaxFOV;
+	InitialPitch = InSettings.InitialPitch;
+	MinPitch = InSettings.MinPitch;
+	MaxPitch = InSettings.MaxPitch;
+	YawInputSpeed = InSettings.YawInputSpeed;
+	PitchInputSpeed = InSettings.PitchInputSpeed;
+	bInvertPitchInput = InSettings.bInvertPitchInput;
+	bEnableRotationLag = InSettings.bEnableRotationLag;
+	RotationLagSpeed = InSettings.RotationLagSpeed;
+	LookInputDeadZone = InSettings.LookInputDeadZone;
+	bEnableCameraCollision = InSettings.bEnableCameraCollision;
+	CameraCollisionChannel = InSettings.CameraCollisionChannel;
+	CameraCollisionRadius = InSettings.CameraCollisionRadius;
+	MinDistanceFromPivot = InSettings.MinDistanceFromPivot;
+	CollisionProbeStartOffset = InSettings.CollisionProbeStartOffset;
+	CollisionSafetyPadding = InSettings.CollisionSafetyPadding;
+	CollisionCompressionSpeed = InSettings.CollisionCompressionSpeed;
+	CollisionRecoverySpeed = InSettings.CollisionRecoverySpeed;
+	bEnablePredictiveAvoidance = InSettings.bEnablePredictiveAvoidance;
+	FeelerYawOffset = InSettings.FeelerYawOffset;
+	FeelerPairs = InSettings.FeelerPairs;
+	FeelerProbeRadius = InSettings.FeelerProbeRadius;
+	bEnableMovementAnticipation = InSettings.bEnableMovementAnticipation;
+	MovementAnticipationForwardOffset = InSettings.MovementAnticipationForwardOffset;
+	MovementAnticipationBackwardOffset = InSettings.MovementAnticipationBackwardOffset;
+	MovementAnticipationSideOffset = InSettings.MovementAnticipationSideOffset;
+	MovementAnticipationFullSpeed = InSettings.MovementAnticipationFullSpeed;
+	MovementAnticipationInterpSpeed = InSettings.MovementAnticipationInterpSpeed;
+	MovementAnticipationReturnSpeed = InSettings.MovementAnticipationReturnSpeed;
+	MovementAnticipationDeadZone = InSettings.MovementAnticipationDeadZone;
+	bReduceMovementAnticipationWhileLooking = InSettings.bReduceMovementAnticipationWhileLooking;
+	LookInputAnticipationMultiplier = InSettings.LookInputAnticipationMultiplier;
+	MovementAnticipationLookInputThreshold = InSettings.MovementAnticipationLookInputThreshold;
+	bEnablePitchDistanceModifier = InSettings.bEnablePitchDistanceModifier;
+	PitchDistanceAtMinPitchOffset = InSettings.PitchDistanceAtMinPitchOffset;
+	PitchDistanceAtMaxPitchOffset = InSettings.PitchDistanceAtMaxPitchOffset;
+	bEnablePitchFOVModifier = InSettings.bEnablePitchFOVModifier;
+	PitchFOVAtMinPitchOffset = InSettings.PitchFOVAtMinPitchOffset;
+	PitchFOVAtMaxPitchOffset = InSettings.PitchFOVAtMaxPitchOffset;
+	PitchModifierInterpSpeed = InSettings.PitchModifierInterpSpeed;
+	bEnableSpeedDistanceModifier = InSettings.bEnableSpeedDistanceModifier;
+	SpeedDistanceOffset = InSettings.SpeedDistanceOffset;
+	bEnableSpeedFOVModifier = InSettings.bEnableSpeedFOVModifier;
+	SpeedFOVOffset = InSettings.SpeedFOVOffset;
+	SpeedModifierFullSpeed = InSettings.SpeedModifierFullSpeed;
+	SpeedModifierInterpSpeed = InSettings.SpeedModifierInterpSpeed;
+	bEnableFocusSystem = InSettings.bEnableFocusSystem;
+	DefaultFocusActorTag = InSettings.DefaultFocusActorTag;
+	DefaultFocusBlendInTime = InSettings.DefaultFocusBlendInTime;
+	DefaultFocusBlendOutTime = InSettings.DefaultFocusBlendOutTime;
+	bClampFocusPitchToCameraLimits = InSettings.bClampFocusPitchToCameraLimits;
+	FocusMinimumTargetDistance = InSettings.FocusMinimumTargetDistance;
+	FocusTargetSearchDistance = InSettings.FocusTargetSearchDistance;
+	bRequireFocusTargetInFront = InSettings.bRequireFocusTargetInFront;
+	FocusTargetMinForwardDot = InSettings.FocusTargetMinForwardDot;
+	bRequireFocusTargetLineOfSight = InSettings.bRequireFocusTargetLineOfSight;
+	FocusTargetLineOfSightChannel = InSettings.FocusTargetLineOfSightChannel;
+	FocusTargetAlignmentScoreWeight = InSettings.FocusTargetAlignmentScoreWeight;
+	FocusTargetDistanceScoreWeight = InSettings.FocusTargetDistanceScoreWeight;
+	bLogFocusTargetSelection = InSettings.bLogFocusTargetSelection;
+	bDrawFocusTargetSelectionDebug = InSettings.bDrawFocusTargetSelectionDebug;
+	FocusTargetSelectionDebugDuration = InSettings.FocusTargetSelectionDebugDuration;
+	bDrawFocusDebug = InSettings.bDrawFocusDebug;
+	bDrawCameraCollisionDebug = InSettings.bDrawCameraCollisionDebug;
+	bDrawCameraStateDebug = InSettings.bDrawCameraStateDebug;
+	bShowSlateDebugPanel = InSettings.bShowSlateDebugPanel;
+	SlateDebugPanelWidth = InSettings.SlateDebugPanelWidth;
+	SlateDebugPanelZOrder = InSettings.SlateDebugPanelZOrder;
+	bEnablePitchConstraints = InSettings.bEnablePitchConstraints;
+	PitchConstraintTolerance = InSettings.PitchConstraintTolerance;
+	bEnablePitchMovementFollow = InSettings.bEnablePitchMovementFollow;
+	RestingCameraPitch = InSettings.RestingCameraPitch;
+	PitchFollowSpeed = InSettings.PitchFollowSpeed;
+	PitchFollowTimeThreshold = InSettings.PitchFollowTimeThreshold;
+	PitchFollowAngleThreshold = InSettings.PitchFollowAngleThreshold;
+	PitchFollowMinSpeedThreshold = InSettings.PitchFollowMinSpeedThreshold;
+	bEnableYawMovementFollow = InSettings.bEnableYawMovementFollow;
+	YawFollowSpeed = InSettings.YawFollowSpeed;
+	YawFollowTimeThreshold = InSettings.YawFollowTimeThreshold;
+	YawFollowAngleThreshold = InSettings.YawFollowAngleThreshold;
+	YawFollowMinSpeedThreshold = InSettings.YawFollowMinSpeedThreshold;
+	bYawFollowOnlyForwardMovement = InSettings.bYawFollowOnlyForwardMovement;
+	bEnableIdleCameraShake = InSettings.bEnableIdleCameraShake;
+	IdleCameraShakeClass = InSettings.IdleCameraShakeClass;
+	IdleCameraShakeScale = InSettings.IdleCameraShakeScale;
+	IdleCameraShakeMaxSpeed = InSettings.IdleCameraShakeMaxSpeed;
+	bEnableMovementCameraShake = InSettings.bEnableMovementCameraShake;
+	MovementCameraShakeClass = InSettings.MovementCameraShakeClass;
+	MovementCameraShakeMinSpeed = InSettings.MovementCameraShakeMinSpeed;
+	MovementCameraShakeMaxSpeed = InSettings.MovementCameraShakeMaxSpeed;
+	MovementCameraShakeMinScale = InSettings.MovementCameraShakeMinScale;
+	MovementCameraShakeMaxScale = InSettings.MovementCameraShakeMaxScale;
+	MovementCameraShakeScaleInterpSpeed = InSettings.MovementCameraShakeScaleInterpSpeed;
+
+	ResetTransientStateAfterSettingsApply();
+}
+
+void UVoraxiaCameraComponent::ResetTransientStateAfterSettingsApply()
+{
+	StopAllCameraShakes(true);
+	IdleCameraShakeHandle = FVoraxiaCameraShakeHandle();
+	MovementCameraShakeHandle = FVoraxiaCameraShakeHandle();
+	CurrentMovementCameraShakeScale = 0.0f;
+
+	InitializeRuntimeState();
+	CurrentCollisionDistanceFromPivot = -1.0f;
+	bWasCameraCollisionBlocked = false;
+	LastDesiredDistanceFromPivot = 0.0f;
+	LastEffectiveDistanceFromPivot = 0.0f;
+	CurrentPitchDistanceOffset = 0.0f;
+	CurrentPitchFOVOffset = 0.0f;
+	CurrentSpeedDistanceOffset = 0.0f;
+	CurrentSpeedFOVOffset = 0.0f;
+	CurrentMovementAnticipationOffset = FVector::ZeroVector;
+
+	FocusAlpha = 0.0f;
+	ResetFocusTarget();
+
+	if (bShowSlateDebugPanel)
+	{
+		CreateSlateDebugPanel();
+	}
+	else
+	{
+		DestroySlateDebugPanel();
+	}
 }
 
 void UVoraxiaCameraComponent::InitializeRuntimeState()

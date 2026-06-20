@@ -4,13 +4,18 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Camera/CameraShakeBase.h"
+#include "VoraxiaCameraSettingsAsset.h"
 #include "VoraxiaCameraComponent.generated.h"
 
 class AActor;
+class APlayerCameraManager;
 class UCameraComponent;
 class UCurveFloat;
 class SWidget;
 class USceneComponent;
+class UVoraxiaCameraSettingsAsset;
+struct FVoraxiaCameraPersistentSettings;
 
 struct FVoraxiaCameraRuntimeFloat
 {
@@ -43,6 +48,47 @@ struct FVoraxiaCameraRuntimeVector
 	void Set(const FVector& InValue, float InBlendTime, UCurveFloat* InBlendCurve);
 	FVector Tick(float DeltaTime);
 };
+
+USTRUCT(BlueprintType)
+struct VORAXIACAMERA_API FVoraxiaCameraShakeHandle
+{
+	GENERATED_BODY()
+
+	/** Stable identifier owned by UVoraxiaCameraComponent. INDEX_NONE means invalid. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake")
+	int32 Id = INDEX_NONE;
+
+	/** Human-readable class name captured when the shake was started. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake")
+	FName ShakeName = NAME_None;
+
+	bool IsValid() const
+	{
+		return Id != INDEX_NONE;
+	}
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FVoraxiaCameraShakeStartedEvent,
+	FVoraxiaCameraShakeHandle,
+	ShakeHandle,
+	float,
+	Scale
+);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FVoraxiaCameraShakeStoppedEvent,
+	FVoraxiaCameraShakeHandle,
+	ShakeHandle,
+	bool,
+	bInterrupted
+);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FVoraxiaCameraSettingsAssetEvent,
+	UVoraxiaCameraSettingsAsset*,
+	SettingsAsset
+);
 
 UCLASS(ClassGroup=(Voraxia), meta=(BlueprintSpawnableComponent))
 class VORAXIACAMERA_API UVoraxiaCameraComponent : public UActorComponent
@@ -241,6 +287,64 @@ public:
 	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Dynamic Modifiers")
 	float GetCurrentDynamicFOVOffset() const;
 	
+
+	/** Starts a manual camera shake on the owning local player camera manager and returns a stable Voraxia handle. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Camera Shake")
+	FVoraxiaCameraShakeHandle PlayCameraShake(
+		TSubclassOf<UCameraShakeBase> ShakeClass,
+		float Scale = 1.0f,
+		ECameraShakePlaySpace PlaySpace = ECameraShakePlaySpace::CameraLocal,
+		FRotator UserPlaySpaceRotation = FRotator::ZeroRotator
+	);
+
+	/** Requests that one started camera shake stops. A non-immediate stop respects the shake asset's blend-out. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Camera Shake")
+	bool StopCameraShake(FVoraxiaCameraShakeHandle ShakeHandle, bool bImmediately = false);
+
+	/** Stops every camera shake started through this component. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Camera Shake")
+	void StopAllCameraShakes(bool bImmediately = false);
+
+	/** Returns true while the given camera shake handle still owns an active or blending-out shake instance. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Camera Shake")
+	bool IsCameraShakePlaying(FVoraxiaCameraShakeHandle ShakeHandle) const;
+
+	/** Returns how many manual or automatic camera shake instances are currently tracked. */
+	UFUNCTION(BlueprintPure, Category="Voraxia Camera|Camera Shake")
+	int32 GetActiveCameraShakeCount() const;
+
+	/** Applies a complete persistent camera preset. Runtime framing, focus, and active shake state are reset deliberately. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Settings Asset")
+	bool ApplyCameraSettingsAsset(UVoraxiaCameraSettingsAsset* SettingsAsset);
+
+	/** Captures every persistent camera setting, plus optional sibling dither settings, into an existing asset. Editor-only persistence. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Settings Asset")
+	bool CaptureCurrentSettingsToAsset(UVoraxiaCameraSettingsAsset* SettingsAsset);
+
+	/** Uses AssignedSettingsAsset as the capture destination. This appears as an editor Details-panel button. */
+	UFUNCTION(CallInEditor, Category="Voraxia Camera|Settings Asset")
+	void CaptureCurrentSettingsToAssignedAsset();
+
+	/** Uses AssignedSettingsAsset as the source preset. This appears as an editor Details-panel button. */
+	UFUNCTION(CallInEditor, Category="Voraxia Camera|Settings Asset")
+	void ApplyAssignedSettingsAsset();
+
+	/** Fired whenever a shake started through this component receives a handle. */
+	UPROPERTY(BlueprintAssignable, Category="Voraxia Camera|Callbacks")
+	FVoraxiaCameraShakeStartedEvent OnCameraShakeStarted;
+
+	/** Fired once a shake ends naturally or is stopped through this component. */
+	UPROPERTY(BlueprintAssignable, Category="Voraxia Camera|Callbacks")
+	FVoraxiaCameraShakeStoppedEvent OnCameraShakeStopped;
+
+	/** Fired after a settings preset has been applied. */
+	UPROPERTY(BlueprintAssignable, Category="Voraxia Camera|Callbacks")
+	FVoraxiaCameraSettingsAssetEvent OnCameraSettingsApplied;
+
+	/** Fired after current settings have been captured into an assigned data asset in the editor. */
+	UPROPERTY(BlueprintAssignable, Category="Voraxia Camera|Callbacks")
+	FVoraxiaCameraSettingsAssetEvent OnCameraSettingsCaptured;
+
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Debug")
 	void SetSlateDebugPanelVisible(bool bVisible);
 
@@ -472,6 +576,55 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Dynamic Modifiers|Speed")
 	float SpeedModifierInterpSpeed = 4.0f;
 	
+
+	/** Enables an automatic, subtle local-space shake while the owner is essentially stationary. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Idle")
+	bool bEnableIdleCameraShake = false;
+
+	/** Shake class played while the owner is idle. Leave unset to disable the idle shake even when enabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Idle", meta=(EditCondition="bEnableIdleCameraShake"))
+	TSubclassOf<UCameraShakeBase> IdleCameraShakeClass;
+
+	/** Intensity multiplier used by the automatic idle shake. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Idle", meta=(EditCondition="bEnableIdleCameraShake", ClampMin="0.0"))
+	float IdleCameraShakeScale = 0.10f;
+
+	/** Maximum 2D owner speed that still counts as idle for the idle shake. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Idle", meta=(EditCondition="bEnableIdleCameraShake", ClampMin="0.0"))
+	float IdleCameraShakeMaxSpeed = 5.0f;
+
+	/** Enables an automatic local-space shake whose intensity follows owner movement speed. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Movement")
+	bool bEnableMovementCameraShake = false;
+
+	/** Shake class played while the owner is moving. Leave unset to disable movement shake. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Movement", meta=(EditCondition="bEnableMovementCameraShake"))
+	TSubclassOf<UCameraShakeBase> MovementCameraShakeClass;
+
+	/** Owner speed at which the movement shake first becomes active. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Movement", meta=(EditCondition="bEnableMovementCameraShake", ClampMin="0.0"))
+	float MovementCameraShakeMinSpeed = 150.0f;
+
+	/** Owner speed that maps to the maximum movement shake scale. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Movement", meta=(EditCondition="bEnableMovementCameraShake", ClampMin="0.0"))
+	float MovementCameraShakeMaxSpeed = 850.0f;
+
+	/** Lowest scale used once the movement shake begins. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Movement", meta=(EditCondition="bEnableMovementCameraShake", ClampMin="0.0"))
+	float MovementCameraShakeMinScale = 0.10f;
+
+	/** Highest scale used at or above MovementCameraShakeMaxSpeed. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Movement", meta=(EditCondition="bEnableMovementCameraShake", ClampMin="0.0"))
+	float MovementCameraShakeMaxScale = 0.45f;
+
+	/** How quickly the movement shake scale reacts to speed changes. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Camera Shake|Movement", meta=(EditCondition="bEnableMovementCameraShake", ClampMin="0.0"))
+	float MovementCameraShakeScaleInterpSpeed = 6.0f;
+
+	/** Optional data asset used by the Details-panel capture/apply helpers. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Settings Asset")
+	TObjectPtr<UVoraxiaCameraSettingsAsset> AssignedSettingsAsset = nullptr;
+
 	/** Enables rotation-only camera focus toward actors, components, sockets, or world locations. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia Camera|Focus")
 	bool bEnableFocusSystem = true;
@@ -675,6 +828,31 @@ private:
 	FVector LastDesiredCameraLocation = FVector::ZeroVector;
 	FVector LastFinalCameraLocation = FVector::ZeroVector;
 	FVector CurrentMovementAnticipationOffset = FVector::ZeroVector;
+
+	struct FActiveCameraShake
+	{
+		FVoraxiaCameraShakeHandle Handle;
+		TWeakObjectPtr<UCameraShakeBase> Instance;
+		TSubclassOf<UCameraShakeBase> ShakeClass;
+		bool bStopRequested = false;
+		bool bStopWasImmediate = false;
+	};
+
+	TMap<int32, FActiveCameraShake> ActiveCameraShakes;
+	int32 NextCameraShakeHandleId = 1;
+	FVoraxiaCameraShakeHandle IdleCameraShakeHandle;
+	FVoraxiaCameraShakeHandle MovementCameraShakeHandle;
+	float CurrentMovementCameraShakeScale = 0.0f;
+
+	APlayerCameraManager* ResolvePlayerCameraManager() const;
+	void UpdateCameraShakeSystem(float DeltaTime);
+	void UpdateActiveCameraShakes();
+	void UpdateAutomaticCameraShakes(float DeltaTime);
+	void RequestStopCameraShake(int32 HandleId, bool bImmediately);
+	void NotifyCameraShakeStopped(const FActiveCameraShake& ActiveShake, bool bInterrupted);
+	void PopulatePersistentSettings(FVoraxiaCameraPersistentSettings& OutSettings) const;
+	void ApplyPersistentSettings(const FVoraxiaCameraPersistentSettings& InSettings);
+	void ResetTransientStateAfterSettingsApply();
 
 	void InitializeRuntimeState();
 	void UpdateRuntimeState(float DeltaTime);
