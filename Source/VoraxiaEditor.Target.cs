@@ -15,6 +15,6 @@ public class VoraxiaEditorTarget : TargetRules
 
     private void RegisterModulesCreatedByRider()
     {
-        ExtraModuleNames.AddRange(new string[] { "VoraxiaLog" });
+        ExtraModuleNames.AddRange(new string[] { "VoraxiaLog", "VoraxiaVoxel" });
     }
 }

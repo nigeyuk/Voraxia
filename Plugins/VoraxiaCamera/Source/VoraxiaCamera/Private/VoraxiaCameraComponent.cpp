@@ -1372,6 +1372,96 @@ bool UVoraxiaCameraComponent::ApplyCameraSettingsAsset(
 	return true;
 }
 
+bool UVoraxiaCameraComponent::ApplyCameraSettingsAssetSmooth(
+	UVoraxiaCameraSettingsAsset* SettingsAsset,
+	const float BlendTime,
+	UCurveFloat* BlendCurve
+)
+{
+	if (!SettingsAsset)
+	{
+		UE_LOG(LogVoraxiaCamera, Warning, TEXT("Voraxia smooth camera settings apply failed because no settings asset was supplied."));
+		return false;
+	}
+
+	const float SafeBlendTime = FMath::Max(0.0f, BlendTime);
+
+	if (SafeBlendTime <= KINDA_SMALL_NUMBER)
+	{
+		return ApplyCameraSettingsAsset(SettingsAsset);
+	}
+
+	/*
+	 * Preserve the visible framing before persistent settings change.
+	 * Runtime offsets are rebased and then blended to zero, so new base offsets do not snap.
+	 */
+	const FVector CurrentVisibleCameraOffset =
+		AdditionalCameraOffset + RuntimeCameraOffset.CurrentValue;
+
+	const FVector CurrentVisiblePivotOffset =
+		AdditionalPivotOffset + RuntimePivotOffset.CurrentValue;
+
+	const float CurrentVisibleBaseFOV =
+		BaseFOV + RuntimeFOVOffset.CurrentValue;
+
+	ApplyPersistentSettings(SettingsAsset->CameraSettings, false);
+
+	RuntimeCameraDistance.Set(CameraDistance, SafeBlendTime, BlendCurve);
+	RuntimePivotHeight.Set(PivotHeight, SafeBlendTime, BlendCurve);
+
+	RuntimeCameraOffset.Initialize(
+		CurrentVisibleCameraOffset - AdditionalCameraOffset
+	);
+	RuntimeCameraOffset.Set(FVector::ZeroVector, SafeBlendTime, BlendCurve);
+
+	RuntimePivotOffset.Initialize(
+		CurrentVisiblePivotOffset - AdditionalPivotOffset
+	);
+	RuntimePivotOffset.Set(FVector::ZeroVector, SafeBlendTime, BlendCurve);
+
+	RuntimeFOVOffset.Initialize(CurrentVisibleBaseFOV - BaseFOV);
+	RuntimeFOVOffset.Set(0.0f, SafeBlendTime, BlendCurve);
+
+	RuntimeShoulderOffset.Set(
+		GetTargetShoulderOffset(),
+		SafeBlendTime,
+		BlendCurve
+	);
+
+	if (bShowSlateDebugPanel)
+	{
+		CreateSlateDebugPanel();
+	}
+	else
+	{
+		DestroySlateDebugPanel();
+	}
+
+	if (SettingsAsset->bIncludeOcclusionDitherSettings)
+	{
+		if (AActor* Owner = GetOwner())
+		{
+			if (UVoraxiaCameraOcclusionDitherComponent* DitherComponent = Owner->FindComponentByClass<UVoraxiaCameraOcclusionDitherComponent>())
+			{
+				DitherComponent->ApplySettings(SettingsAsset->OcclusionDitherSettings);
+			}
+		}
+	}
+
+	AssignedSettingsAsset = SettingsAsset;
+	OnCameraSettingsApplied.Broadcast(SettingsAsset);
+
+	UE_LOG(
+		LogVoraxiaCamera,
+		Log,
+		TEXT("Voraxia camera settings smooth transition started from '%s' over %.2fs."),
+		*GetNameSafe(SettingsAsset),
+		SafeBlendTime
+	);
+
+	return true;
+}
+
 void UVoraxiaCameraComponent::CaptureCurrentSettingsToAssignedAsset()
 {
 	CaptureCurrentSettingsToAsset(AssignedSettingsAsset);
@@ -1380,6 +1470,18 @@ void UVoraxiaCameraComponent::CaptureCurrentSettingsToAssignedAsset()
 void UVoraxiaCameraComponent::ApplyAssignedSettingsAsset()
 {
 	ApplyCameraSettingsAsset(AssignedSettingsAsset);
+}
+
+bool UVoraxiaCameraComponent::ApplyAssignedSettingsAssetSmooth(
+	const float BlendTime,
+	UCurveFloat* BlendCurve
+)
+{
+	return ApplyCameraSettingsAssetSmooth(
+		AssignedSettingsAsset,
+		BlendTime,
+		BlendCurve
+	);
 }
 
 void UVoraxiaCameraComponent::PopulatePersistentSettings(
@@ -1497,7 +1599,8 @@ void UVoraxiaCameraComponent::PopulatePersistentSettings(
 }
 
 void UVoraxiaCameraComponent::ApplyPersistentSettings(
-	const FVoraxiaCameraPersistentSettings& InSettings
+	const FVoraxiaCameraPersistentSettings& InSettings,
+	const bool bResetTransientState
 )
 {
 	bAutoFindCameraComponent = InSettings.bAutoFindCameraComponent;
@@ -1609,7 +1712,10 @@ void UVoraxiaCameraComponent::ApplyPersistentSettings(
 	MovementCameraShakeMaxScale = InSettings.MovementCameraShakeMaxScale;
 	MovementCameraShakeScaleInterpSpeed = InSettings.MovementCameraShakeScaleInterpSpeed;
 
-	ResetTransientStateAfterSettingsApply();
+	if (bResetTransientState)
+	{
+		ResetTransientStateAfterSettingsApply();
+	}
 }
 
 void UVoraxiaCameraComponent::ResetTransientStateAfterSettingsApply()

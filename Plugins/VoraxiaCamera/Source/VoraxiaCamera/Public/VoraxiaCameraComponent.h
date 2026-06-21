@@ -372,6 +372,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Settings Asset")
 	bool ApplyCameraSettingsAsset(UVoraxiaCameraSettingsAsset* SettingsAsset);
 
+	/**
+	 * Applies a preset while smoothly blending its visible framing layer.
+	 * Distance, pivot height, permanent camera/pivot offsets, shoulder position, and base FOV blend.
+	 * Other persistent tuning is updated immediately, while active focus and manual camera shakes are preserved.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Settings Asset")
+	bool ApplyCameraSettingsAssetSmooth(
+		UVoraxiaCameraSettingsAsset* SettingsAsset,
+		float BlendTime = 0.35f,
+		UCurveFloat* BlendCurve = nullptr
+	);
+
 	/** Captures every persistent camera setting, plus optional sibling dither settings, into an existing asset. Editor-only persistence. */
 	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Settings Asset")
 	bool CaptureCurrentSettingsToAsset(UVoraxiaCameraSettingsAsset* SettingsAsset);
@@ -383,6 +395,13 @@ public:
 	/** Uses AssignedSettingsAsset as the source preset. This appears as an editor Details-panel button. */
 	UFUNCTION(CallInEditor, Category="Voraxia Camera|Settings Asset")
 	void ApplyAssignedSettingsAsset();
+
+	/** Smoothly applies AssignedSettingsAsset at runtime using the supplied framing blend time. */
+	UFUNCTION(BlueprintCallable, Category="Voraxia Camera|Settings Asset")
+	bool ApplyAssignedSettingsAssetSmooth(
+		float BlendTime = 0.35f,
+		UCurveFloat* BlendCurve = nullptr
+	);
 
 	/** Fired whenever a shake started through this component receives a handle. */
 	UPROPERTY(BlueprintAssignable, Category="Voraxia Camera|Callbacks")
@@ -953,7 +972,7 @@ private:
 	void RequestStopCameraShake(int32 HandleId, bool bImmediately);
 	void NotifyCameraShakeStopped(const FActiveCameraShake& ActiveShake, bool bInterrupted);
 	void PopulatePersistentSettings(FVoraxiaCameraPersistentSettings& OutSettings) const;
-	void ApplyPersistentSettings(const FVoraxiaCameraPersistentSettings& InSettings);
+	void ApplyPersistentSettings(const FVoraxiaCameraPersistentSettings& InSettings, bool bResetTransientState = true);
 	void ResetTransientStateAfterSettingsApply();
 
 	float GetTargetShoulderOffset() const;
