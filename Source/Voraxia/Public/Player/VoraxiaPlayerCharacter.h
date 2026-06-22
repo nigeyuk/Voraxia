@@ -11,6 +11,7 @@ class UInputAction;
 class UInputMappingContext;
 class UVoraxiaCameraComponent;
 class UVoraxiaCameraOcclusionDitherComponent;
+class UVoraxiaRaptorMiningComponent;
 
 struct FInputActionValue;
 
@@ -43,7 +44,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
 	TObjectPtr<UVoraxiaCameraComponent> VoraxiaCameraComponent;
-
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Mining")
+	TObjectPtr<UVoraxiaRaptorMiningComponent> RaptorMiningComponent;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
@@ -67,6 +71,9 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> SwapShoulderAction;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
+	TObjectPtr<UInputAction> MiningAction;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement")
 	bool bCharacterFacesCameraYaw = true;
@@ -115,4 +122,7 @@ private:
 	
 	void FocusStarted(const FInputActionValue& Value);
 	void FocusEnded(const FInputActionValue& Value);
+	
+	void MiningStarted(const FInputActionValue& Value);
+	void MiningEnded(const FInputActionValue& Value);
 };

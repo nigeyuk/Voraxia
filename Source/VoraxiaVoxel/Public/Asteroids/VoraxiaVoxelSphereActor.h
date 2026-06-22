@@ -4,13 +4,16 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Mining/VoraxiaVoxelMineable.h"
 #include "VoraxiaVoxelSphereActor.generated.h"
 
 class UMaterialInterface;
 class UProceduralMeshComponent;
 
 UCLASS(BlueprintType, Blueprintable)
-class VORAXIAVOXEL_API AVoraxiaVoxelSphereActor : public AActor
+class VORAXIAVOXEL_API AVoraxiaVoxelSphereActor
+	: public AActor
+	, public IVoraxiaVoxelMineable
 {
 	GENERATED_BODY()
 
@@ -18,6 +21,11 @@ public:
 	AVoraxiaVoxelSphereActor();
 
 	virtual void BeginPlay() override;
+	
+	virtual bool ApplyVoxelCarve_Implementation(
+	const FHitResult& Hit,
+	float WorldBrushRadius
+	) override;
 
 	/*
 	 * Resets the density field to a clean sphere and rebuilds its mesh.
@@ -55,6 +63,17 @@ public:
 	 */
 	UFUNCTION(CallInEditor, Category = "Voraxia|Voxel Sphere|Debug")
 	void CarveDebugSphere();
+	
+	/*
+	* Immediately scans the density field and removes small solid islands that
+	* are no longer connected to the asteroid's main body.
+	*/
+	UFUNCTION(
+		BlueprintCallable,
+		CallInEditor,
+		Category = "Voraxia|Voxel Sphere|Detached Fragments"
+	)
+	void CleanupDetachedFragmentsNow();
 
 	UFUNCTION(BlueprintPure, Category = "Voraxia|Voxel Sphere")
 	UProceduralMeshComponent* GetVoxelMesh() const
@@ -128,6 +147,114 @@ protected:
 		meta = (ClampMin = "1.0")
 	)
 	float DebugCarveRadius = 180.0f;
+	
+	UPROPERTY(
+	EditAnywhere,
+	BlueprintReadOnly,
+	Category = "Voraxia|Voxel Sphere|Detached Fragments"
+)
+	bool bCleanupDetachedFragments = true;
+
+	/*
+	 * Each fresh mining hit restarts this delay. That lets a small fragment
+	 * remain visible briefly before it is removed with its collision.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia|Voxel Sphere|Detached Fragments",
+		meta = (
+			ClampMin = "0.0",
+			UIMin = "0.0",
+			UIMax = "10.0",
+			EditCondition = "bCleanupDetachedFragments"
+		)
+	)
+	float DetachedFragmentCleanupDelay = 3.0f;
+
+	/*
+	 * A disconnected solid region at or below this many voxel cells is
+	 * considered disposable mining debris.
+	 *
+	 * The largest solid island is always protected.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia|Voxel Sphere|Detached Fragments",
+		meta = (
+			ClampMin = "1",
+			UIMin = "1",
+			UIMax = "128",
+			EditCondition = "bCleanupDetachedFragments"
+		)
+	)
+	int32 MaxDetachedFragmentCellCount = 24;
+	
+	UPROPERTY(
+	EditAnywhere,
+	BlueprintReadOnly,
+	Category = "Voraxia|Voxel Sphere|Detached Fragments|Debug"
+)
+	bool bDrawDetachedFragmentCandidates = true;
+
+	/*
+	 * When enabled, candidate fragments are boxed but not removed.
+	 * Useful for checking whether the connected-island scan has found the
+	 * pieces you expect before allowing cleanup to delete them.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia|Voxel Sphere|Detached Fragments|Debug",
+		meta = (EditCondition = "bDrawDetachedFragmentCandidates")
+	)
+	bool bDebugOnlyDetachedFragmentCandidates = false;
+
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia|Voxel Sphere|Detached Fragments|Debug",
+		meta = (
+			ClampMin = "0.1",
+			UIMin = "0.1",
+			UIMax = "15.0",
+			EditCondition = "bDrawDetachedFragmentCandidates"
+		)
+	)
+	float DetachedFragmentDebugLifetime = 5.0f;
+	
+	/*
+ * Shrinks the rock used by the connectivity scan without changing the
+ * rendered asteroid itself. A higher value breaks weak voxel bridges more
+ * aggressively when identifying detached islands.
+ *
+ * This is measured in the same world-unit space as voxel density.
+ */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia|Voxel Sphere|Detached Fragments|Debug",
+		meta = (
+			ClampMin = "0.0",
+			UIMin = "0.0",
+			UIMax = "50.0"
+		)
+	)
+	float DetachedFragmentConnectivityErosion = 10.0f;
+
+	/*
+	 * Draw every disconnected island found by the scan:
+	 * Cyan    = main asteroid body
+	 * Orange  = detached and small enough for deletion
+	 * Magenta = detached, but currently above the deletion-size limit
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia|Voxel Sphere|Detached Fragments|Debug"
+	)
+	bool bDrawAllDetachedFragmentIslands = true;
 
 private:
 	TArray<float> DensitySamples;
@@ -149,5 +276,35 @@ private:
 		int32 Y,
 		int32 Z,
 		int32 SampleCount
+	) const;
+	
+private:
+	
+	FTimerHandle DetachedFragmentCleanupTimerHandle;
+
+	void ScheduleDetachedFragmentCleanup();
+
+	void CleanupDetachedFragments();
+
+	/*
+	 * Returns the number of density cells removed from small detached islands.
+	 */
+	int32 RemoveSmallDetachedSolidIslands();
+
+	bool IsCellSolid(
+		int32 X,
+		int32 Y,
+		int32 Z
+	) const;
+
+	int32 GetCellIndex(
+		int32 X,
+		int32 Y,
+		int32 Z
+	) const;
+	
+	void DrawDetachedFragmentCandidateBox(
+	const TArray<int32>& IslandCells,
+	const FColor& Colour
 	) const;
 };

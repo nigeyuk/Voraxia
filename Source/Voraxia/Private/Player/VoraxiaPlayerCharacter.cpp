@@ -2,14 +2,17 @@
 
 #include "Player/VoraxiaPlayerCharacter.h"
 
-#include "Camera/CameraComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
+
+#include "Camera/CameraComponent.h"
 #include "VoraxiaCameraComponent.h"
+#include "Mining/VoraxiaRaptorMiningComponent.h"
 #include "VoraxiaCameraOcclusionDitherComponent.h"
 
 AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
@@ -36,7 +39,14 @@ AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
 	CameraComponent->SetupAttachment(RootComponent);
 	CameraComponent->bUsePawnControlRotation = false;
 
-	VoraxiaCameraComponent = CreateDefaultSubobject<UVoraxiaCameraComponent>(TEXT("VoraxiaCameraComponent"));
+	VoraxiaCameraComponent = 
+	CreateDefaultSubobject<UVoraxiaCameraComponent>
+		(TEXT("VoraxiaCameraComponent"));
+	
+	RaptorMiningComponent =
+	CreateDefaultSubobject<UVoraxiaRaptorMiningComponent>(
+		TEXT("RaptorMiningComponent")
+	);
 
 	CameraOcclusionDitherComponent =
 		CreateDefaultSubobject<UVoraxiaCameraOcclusionDitherComponent>(
@@ -224,6 +234,34 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Voraxia SwapShoulderAction is not assigned."));
 	}
+	
+	if (MiningAction)
+	{
+		EnhancedInputComponent->BindAction(
+			MiningAction,
+			ETriggerEvent::Started,
+			this,
+			&AVoraxiaPlayerCharacter::MiningStarted
+		);
+
+		EnhancedInputComponent->BindAction(
+			MiningAction,
+			ETriggerEvent::Completed,
+			this,
+			&AVoraxiaPlayerCharacter::MiningEnded
+		);
+
+		EnhancedInputComponent->BindAction(
+			MiningAction,
+			ETriggerEvent::Canceled,
+			this,
+			&AVoraxiaPlayerCharacter::MiningEnded
+		);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia MiningAction is not assigned."));
+	}
 }
 
 void AVoraxiaPlayerCharacter::AddDefaultMappingContext()
@@ -392,4 +430,34 @@ void AVoraxiaPlayerCharacter::SwapShoulderStarted(
 	}
 
 	VoraxiaCameraComponent->SwapCameraShoulder(0.25f);
+}
+
+void AVoraxiaPlayerCharacter::MiningStarted(
+	const FInputActionValue& Value
+)
+{
+	if (!RaptorMiningComponent)
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("RaptorMiningComponent is null when mining starts.")
+		);
+
+		return;
+	}
+
+	RaptorMiningComponent->StartMining();
+}
+
+void AVoraxiaPlayerCharacter::MiningEnded(
+	const FInputActionValue& Value
+)
+{
+	if (!RaptorMiningComponent)
+	{
+		return;
+	}
+
+	RaptorMiningComponent->StopMining();
 }

@@ -11,16 +11,16 @@ public class VoraxiaVoxel : ModuleRules
             {
                 "Core",                
                 "CoreUObject",
-                "Engine"
+                "Engine",
+                "GameplayTags",
+                "ProceduralMeshComponent",
+                "VoraxiaLog",
             }
         );
 
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
-
-                "ProceduralMeshComponent",
-                "VoraxiaLog",
             }
         );
     }
