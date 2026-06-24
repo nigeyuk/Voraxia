@@ -6,6 +6,8 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Mining/VoraxiaMiningInventoryReceiver.h"
+#include "Mining/VoraxiaMiningTypes.h"
 #include "Mining/VoraxiaVoxelMineable.h"
 #include "VoraxiaLog.h"
 
@@ -289,9 +291,48 @@ bool UVoraxiaRaptorMiningComponent::PerformMiningTrace()
 		return false;
 	}
 
-	return IVoraxiaVoxelMineable::Execute_ApplyVoxelCarve(
-		HitActor,
-		Hit,
-		CarveRadius
-	);
+	TArray<FVoraxiaMiningYield> MiningYields;
+
+	const bool bCarved =
+		IVoraxiaVoxelMineable::Execute_ApplyVoxelCarveWithYields(
+			HitActor,
+			Hit,
+			CarveRadius,
+			MiningYields
+		);
+
+	if (!bCarved)
+	{
+		return false;
+	}
+
+	AActor* MiningOwner = GetOwner();
+
+	if (
+		!MiningOwner ||
+		!MiningOwner->GetClass()->ImplementsInterface(
+			UVoraxiaMiningInventoryReceiver::StaticClass()
+		)
+	)
+	{
+		return true;
+	}
+
+	for (const FVoraxiaMiningYield& MiningYield : MiningYields)
+	{
+		if (
+			!MiningYield.ResourceTag.IsValid() ||
+			MiningYield.Amount <= KINDA_SMALL_NUMBER
+		)
+		{
+			continue;
+		}
+
+		IVoraxiaMiningInventoryReceiver::Execute_ReceiveMiningYield(
+			MiningOwner,
+			MiningYield
+		);
+	}
+
+	return true;
 }

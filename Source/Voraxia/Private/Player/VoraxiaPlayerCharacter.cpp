@@ -13,7 +13,14 @@
 #include "Camera/CameraComponent.h"
 #include "VoraxiaCameraComponent.h"
 #include "Mining/VoraxiaRaptorMiningComponent.h"
+#include "Mining/VoraxiaMiningTypes.h"
+#include "Inventory/VoraxiaResourceInventoryComponent.h"
 #include "VoraxiaCameraOcclusionDitherComponent.h"
+#include "UI/SVoraxiaMiningLedgerWidget.h"
+#include "VoraxiaBlueprintDataAsset.h"
+
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 
 AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
 {
@@ -48,16 +55,100 @@ AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
 		TEXT("RaptorMiningComponent")
 	);
 
+	ResourceInventoryComponent =
+		CreateDefaultSubobject<UVoraxiaResourceInventoryComponent>(
+			TEXT("ResourceInventoryComponent")
+		);
+
 	CameraOcclusionDitherComponent =
 		CreateDefaultSubobject<UVoraxiaCameraOcclusionDitherComponent>(
 			TEXT("CameraOcclusionDitherComponent")
 		);
 }
 
+void AVoraxiaPlayerCharacter::ReceiveMiningYield_Implementation(
+	const FVoraxiaMiningYield& MiningYield
+)
+{
+	if (
+		!MiningYield.ResourceTag.IsValid() ||
+		MiningYield.Amount <= KINDA_SMALL_NUMBER ||
+		!ResourceInventoryComponent
+	)
+	{
+		return;
+	}
+
+	const float NewTotal = ResourceInventoryComponent->AddResource(
+		MiningYield.ResourceTag,
+		MiningYield.Amount
+	);
+
+	if (bLogMiningLedgerUpdates)
+	{
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT(
+				"Mining inventory updated: Player=%s | Resource=%s | "
+				"Added=%.2f | Total=%.2f"
+			),
+			*GetName(),
+			*MiningYield.ResourceTag.ToString(),
+			MiningYield.Amount,
+			NewTotal
+		);
+	}
+}
+
+float AVoraxiaPlayerCharacter::GetMinedResourceAmount(
+	const FGameplayTag ResourceTag
+) const
+{
+	return ResourceInventoryComponent
+		? ResourceInventoryComponent->GetResourceAmount(ResourceTag)
+		: 0.0f;
+}
+
+const TMap<FGameplayTag, float>&
+AVoraxiaPlayerCharacter::GetResourceInventory() const
+{
+	static const TMap<FGameplayTag, float> EmptyInventory;
+
+	return ResourceInventoryComponent
+		? ResourceInventoryComponent->GetResourceAmounts()
+		: EmptyInventory;
+}
+
+void AVoraxiaPlayerCharacter::LogMiningLedger() const
+{
+	const TMap<FGameplayTag, float>& Inventory =
+		GetResourceInventory();
+
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("Mining inventory: %s | Resource Types=%d"),
+		*GetName(),
+		Inventory.Num()
+	);
+
+	for (const TPair<FGameplayTag, float>& Pair : Inventory)
+	{
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT("Mining inventory entry: %s | Total=%.2f"),
+			*Pair.Key.ToString(),
+			Pair.Value
+		);
+	}
+}
+
 void AVoraxiaPlayerCharacter::Tick(const float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	
+
 	UpdateSprintSpeed(DeltaTime);
 	UpdateCharacterFacing(DeltaTime);
 }
@@ -92,6 +183,7 @@ void AVoraxiaPlayerCharacter::PawnClientRestart()
 	Super::PawnClientRestart();
 
 	AddDefaultMappingContext();
+	AddMiningLedgerWidget();
 
 	if (VoraxiaCameraComponent && CameraComponent)
 	{
@@ -102,6 +194,56 @@ void AVoraxiaPlayerCharacter::PawnClientRestart()
 	{
 		CameraOcclusionDitherComponent->SetCameraComponent(VoraxiaCameraComponent);
 	}
+}
+
+
+void AVoraxiaPlayerCharacter::EndPlay(
+	const EEndPlayReason::Type EndPlayReason
+)
+{
+	RemoveMiningLedgerWidget();
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void AVoraxiaPlayerCharacter::AddMiningLedgerWidget()
+{
+	if (
+		!IsLocallyControlled() ||
+		MiningLedgerWidget.IsValid() ||
+		!GEngine ||
+		!GEngine->GameViewport
+	)
+	{
+		return;
+	}
+
+	SAssignNew(
+		MiningLedgerWidget,
+		SVoraxiaMiningLedgerWidget
+	)
+	.OwningPlayer(this);
+
+	GEngine->GameViewport->AddViewportWidgetContent(
+		MiningLedgerWidget.ToSharedRef(),
+		20
+	);
+}
+
+void AVoraxiaPlayerCharacter::RemoveMiningLedgerWidget()
+{
+	if (
+		MiningLedgerWidget.IsValid() &&
+		GEngine &&
+		GEngine->GameViewport
+	)
+	{
+		GEngine->GameViewport->RemoveViewportWidgetContent(
+			MiningLedgerWidget.ToSharedRef()
+		);
+	}
+
+	MiningLedgerWidget.Reset();
 }
 
 void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -460,4 +602,45 @@ void AVoraxiaPlayerCharacter::MiningEnded(
 	}
 
 	RaptorMiningComponent->StopMining();
+}
+
+bool AVoraxiaPlayerCharacter::AddPhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData)
+{
+	if (!BlueprintData)
+	{
+		return false;
+	}
+
+	if (PhysicalBlueprints.Contains(BlueprintData))
+	{
+		return false;
+	}
+
+	PhysicalBlueprints.Add(BlueprintData);
+	return true;
+}
+
+bool AVoraxiaPlayerCharacter::RemovePhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData)
+{
+	if (!BlueprintData)
+	{
+		return false;
+	}
+
+	return PhysicalBlueprints.Remove(BlueprintData) > 0;
+}
+
+bool AVoraxiaPlayerCharacter::HasPhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData) const
+{
+	return BlueprintData && PhysicalBlueprints.Contains(BlueprintData);
+}
+
+const TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>>& AVoraxiaPlayerCharacter::GetPhysicalBlueprints() const
+{
+	return PhysicalBlueprints;
+}
+
+UVoraxiaBlueprintDataAsset* AVoraxiaPlayerCharacter::GetFirstPhysicalBlueprint() const
+{
+	return PhysicalBlueprints.Num() > 0 ? PhysicalBlueprints[0] : nullptr;
 }

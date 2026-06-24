@@ -16,12 +16,15 @@ public class Voraxia : ModuleRules
             "InputCore",
             "EnhancedInput",
             "VoraxiaCamera",
+            "GameplayTags"
            
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]
         {
-            "VoraxiaVoxel"
+            "VoraxiaVoxel",
+            "SlateCore",
+            "Slate"
         });
     }
 }

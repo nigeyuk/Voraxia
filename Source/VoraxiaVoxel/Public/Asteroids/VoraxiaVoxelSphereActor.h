@@ -3,12 +3,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
+#include "Mining/VoraxiaMiningTypes.h"
 #include "GameFramework/Actor.h"
 #include "Mining/VoraxiaVoxelMineable.h"
 #include "VoraxiaVoxelSphereActor.generated.h"
 
 class UMaterialInterface;
 class UProceduralMeshComponent;
+class UVoraxiaOreRegistry;
 
 UCLASS(BlueprintType, Blueprintable)
 class VORAXIAVOXEL_API AVoraxiaVoxelSphereActor
@@ -23,8 +26,14 @@ public:
 	virtual void BeginPlay() override;
 	
 	virtual bool ApplyVoxelCarve_Implementation(
-	const FHitResult& Hit,
-	float WorldBrushRadius
+		const FHitResult& Hit,
+		float WorldBrushRadius
+	) override;
+
+	virtual bool ApplyVoxelCarveWithYields_Implementation(
+		const FHitResult& Hit,
+		float WorldBrushRadius,
+		TArray<FVoraxiaMiningYield>& OutYields
 	) override;
 
 	/*
@@ -63,6 +72,9 @@ public:
 	 */
 	UFUNCTION(CallInEditor, Category = "Voraxia|Voxel Sphere|Debug")
 	void CarveDebugSphere();
+
+	UFUNCTION(CallInEditor, Category = "Voraxia|Voxel Sphere|Ore")
+	void RebuildSphereWithOre();
 	
 	/*
 	* Immediately scans the density field and removes small solid islands that
@@ -134,6 +146,39 @@ protected:
 		Category = "Voraxia|Voxel Sphere|Appearance"
 	)
 	TObjectPtr<UMaterialInterface> VoxelMaterial;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore")
+	TObjectPtr<UVoraxiaOreRegistry> OreRegistry;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore", meta = (Categories = "Resource.Ore"))
+	FGameplayTag BaseMaterialTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore", meta = (Categories = "Resource.Ore"))
+	TArray<FGameplayTag> TestOreTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore", meta = (ClampMin = "1", ClampMax = "3"))
+	int32 MaxOreTypesPerAsteroid = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore", meta = (ClampMin = "1", ClampMax = "4"))
+	int32 OreDepositsPerType = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore", meta = (ClampMin = "25.0", UIMin = "50.0", UIMax = "500.0"))
+	float MinOreDepositRadius = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore", meta = (ClampMin = "25.0", UIMin = "50.0", UIMax = "500.0"))
+	float MaxOreDepositRadius = 220.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore")
+	int32 OreGenerationSeed = 1979;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore|Debug")
+	bool bDrawOreCells = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore|Debug", meta = (EditCondition = "bDrawOreCells"))
+	bool bDrawOnlyNonBaseOreCells = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Voxel Sphere|Ore|Debug", meta = (ClampMin = "0.1", UIMin = "0.1", UIMax = "30.0", EditCondition = "bDrawOreCells"))
+	float OreDebugLifetime = 5.0f;
 
 	UPROPERTY(
 		EditAnywhere,
@@ -258,6 +303,8 @@ protected:
 
 private:
 	TArray<float> DensitySamples;
+	TArray<FGameplayTag> CellOreTags;
+	TArray<float> CellOreRemaining;
 
 	void GenerateSphereDensity();
 
@@ -304,7 +351,29 @@ private:
 	) const;
 	
 	void DrawDetachedFragmentCandidateBox(
-	const TArray<int32>& IslandCells,
-	const FColor& Colour
+		const TArray<int32>& IslandCells,
+		const FColor& Colour
 	) const;
+
+	bool CarveSphereAtWorldLocationInternal(
+		const FVector& WorldLocation,
+		float WorldRadius,
+		TArray<FVoraxiaMiningYield>& OutYields
+	);
+
+	bool CarveSphereAtLocalPositionInternal(
+		const FVector& LocalLocation,
+		float LocalRadius,
+		TArray<FVoraxiaMiningYield>& OutYields
+	);
+
+	void GenerateOreData();
+	void GenerateOreDeposit(FGameplayTag OreTag, FRandomStream& RandomStream, bool bPreferSurface);
+	bool HasMaterialInCell(int32 X, int32 Y, int32 Z) const;
+	bool IsCellDepletedForYield(int32 X, int32 Y, int32 Z) const;
+	FVector GetCellLocalCentre(int32 X, int32 Y, int32 Z) const;
+	TMap<FGameplayTag, float> CollectVaporisedOreYields(const TArray<uint8>& PotentialOreCells);
+	void BuildMiningYields(const TMap<FGameplayTag, float>& YieldByOreTag, TArray<FVoraxiaMiningYield>& OutYields) const;
+	void LogVaporisedOreYields(const TMap<FGameplayTag, float>& YieldByOreTag) const;
+	void DrawOreDebugCells() const;
 };

@@ -671,3 +671,249 @@ bool FVoraxiaMarchingCubes::BuildIsoSurface(
 	return OutMesh.Vertices.Num() > 0 &&
 		OutMesh.Triangles.Num() > 0;
 }
+
+
+namespace VoraxiaVoxel::MarchingCubes
+{
+	struct FMaterialSectionBuildState final
+	{
+		FVoraxiaVoxelMeshData Mesh;
+		FEdgeVertexCache EdgeCache;
+
+		explicit FMaterialSectionBuildState(const int32 InCellsPerAxis)
+			: EdgeCache(InCellsPerAxis)
+		{
+		}
+	};
+
+	static FMaterialSectionBuildState& FindOrAddMaterialSection(
+		TMap<FGameplayTag, TUniquePtr<FMaterialSectionBuildState>>& InOutSections,
+		const FGameplayTag MaterialTag,
+		const int32 CellsPerAxis
+	)
+	{
+		TUniquePtr<FMaterialSectionBuildState>& Section =
+			InOutSections.FindOrAdd(MaterialTag);
+
+		if (!Section)
+		{
+			Section = MakeUnique<FMaterialSectionBuildState>(
+				CellsPerAxis
+			);
+		}
+
+		return *Section;
+	}
+}
+
+bool FVoraxiaMarchingCubes::BuildIsoSurfaceByMaterial(
+	const TArray<float>& DensitySamples,
+	const int32 CellsPerAxis,
+	const float VoxelSize,
+	const TArray<FGameplayTag>& CellMaterialTags,
+	const FGameplayTag FallbackMaterialTag,
+	TMap<FGameplayTag, FVoraxiaVoxelMeshData>& OutMeshes
+)
+{
+	OutMeshes.Reset();
+
+	if (
+		CellsPerAxis < 1 ||
+		VoxelSize <= 0.0f ||
+		!FallbackMaterialTag.IsValid()
+	)
+	{
+		return false;
+	}
+
+	const int32 SampleCount = CellsPerAxis + 1;
+
+	const int32 RequiredDensityCount =
+		SampleCount * SampleCount * SampleCount;
+
+	const int32 RequiredCellMaterialCount =
+		CellsPerAxis * CellsPerAxis * CellsPerAxis;
+
+	if (
+		DensitySamples.Num() != RequiredDensityCount ||
+		CellMaterialTags.Num() != RequiredCellMaterialCount
+	)
+	{
+		return false;
+	}
+
+	const VoraxiaVoxel::MarchingCubes::FScalarFieldView Field(
+		DensitySamples,
+		CellsPerAxis,
+		SampleCount,
+		VoxelSize,
+		static_cast<float>(CellsPerAxis) * VoxelSize * 0.5f
+	);
+
+	const VoraxiaVoxel::MarchingCubes::FTriangleTable& TriangleTable =
+		VoraxiaVoxel::MarchingCubes::GetTriangleTable();
+
+	TMap<
+		FGameplayTag,
+		TUniquePtr<
+			VoraxiaVoxel::MarchingCubes::FMaterialSectionBuildState
+		>
+	> MaterialSections;
+
+	for (int32 CellZ = 0; CellZ < CellsPerAxis; ++CellZ)
+	{
+		for (int32 CellY = 0; CellY < CellsPerAxis; ++CellY)
+		{
+			for (int32 CellX = 0; CellX < CellsPerAxis; ++CellX)
+			{
+				uint8 CaseIndex = 0;
+
+				for (int32 CornerIndex = 0; CornerIndex < 8; ++CornerIndex)
+				{
+					const int32 SampleX =
+						CellX + VoraxiaVoxel::MarchingCubes::CornerOffsets[
+							CornerIndex
+						][0];
+
+					const int32 SampleY =
+						CellY + VoraxiaVoxel::MarchingCubes::CornerOffsets[
+							CornerIndex
+						][1];
+
+					const int32 SampleZ =
+						CellZ + VoraxiaVoxel::MarchingCubes::CornerOffsets[
+							CornerIndex
+						][2];
+
+					if (Field.Get(SampleX, SampleY, SampleZ) > 0.0f)
+					{
+						CaseIndex |= static_cast<uint8>(
+							1 << CornerIndex
+						);
+					}
+				}
+
+				if (CaseIndex == 0 || CaseIndex == 255)
+				{
+					continue;
+				}
+
+				const int32 CellIndex =
+					CellX + CellsPerAxis * (
+						CellY + CellsPerAxis * CellZ
+					);
+
+				FGameplayTag MaterialTag =
+					CellMaterialTags[CellIndex];
+
+				if (!MaterialTag.IsValid())
+				{
+					MaterialTag = FallbackMaterialTag;
+				}
+
+				VoraxiaVoxel::MarchingCubes::FMaterialSectionBuildState&
+					Section =
+						VoraxiaVoxel::MarchingCubes::FindOrAddMaterialSection(
+							MaterialSections,
+							MaterialTag,
+							CellsPerAxis
+						);
+
+				for (
+					int32 TriangleEntry = 0;
+					TriangleEntry < 16;
+					TriangleEntry += 3
+				)
+				{
+					const int8 FirstEdge = TriangleTable.Get(
+						CaseIndex,
+						TriangleEntry
+					);
+
+					if (FirstEdge < 0)
+					{
+						break;
+					}
+
+					const int8 SecondEdge = TriangleTable.Get(
+						CaseIndex,
+						TriangleEntry + 1
+					);
+
+					const int8 ThirdEdge = TriangleTable.Get(
+						CaseIndex,
+						TriangleEntry + 2
+					);
+
+					check(SecondEdge >= 0 && ThirdEdge >= 0);
+
+					const int32 FirstVertexIndex =
+						VoraxiaVoxel::MarchingCubes::FindOrCreateVertex(
+							CellX,
+							CellY,
+							CellZ,
+							FirstEdge,
+							Field,
+							Section.EdgeCache,
+							Section.Mesh
+						);
+
+					const int32 SecondVertexIndex =
+						VoraxiaVoxel::MarchingCubes::FindOrCreateVertex(
+							CellX,
+							CellY,
+							CellZ,
+							SecondEdge,
+							Field,
+							Section.EdgeCache,
+							Section.Mesh
+						);
+
+					const int32 ThirdVertexIndex =
+						VoraxiaVoxel::MarchingCubes::FindOrCreateVertex(
+							CellX,
+							CellY,
+							CellZ,
+							ThirdEdge,
+							Field,
+							Section.EdgeCache,
+							Section.Mesh
+						);
+
+					VoraxiaVoxel::MarchingCubes::AddTriangle(
+						Section.Mesh,
+						FirstVertexIndex,
+						SecondVertexIndex,
+						ThirdVertexIndex
+					);
+				}
+			}
+		}
+	}
+
+	for (
+		TPair<
+			FGameplayTag,
+			TUniquePtr<
+				VoraxiaVoxel::MarchingCubes::FMaterialSectionBuildState
+			>
+		>& Pair : MaterialSections
+	)
+	{
+		if (
+			!Pair.Value ||
+			Pair.Value->Mesh.Vertices.IsEmpty() ||
+			Pair.Value->Mesh.Triangles.IsEmpty()
+		)
+		{
+			continue;
+		}
+
+		OutMeshes.Add(
+			Pair.Key,
+			MoveTemp(Pair.Value->Mesh)
+		);
+	}
+
+	return !OutMeshes.IsEmpty();
+}

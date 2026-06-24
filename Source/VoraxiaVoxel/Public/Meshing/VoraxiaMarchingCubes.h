@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "ProceduralMeshComponent.h"
 
 struct FVoraxiaVoxelMeshData
@@ -32,5 +33,22 @@ public:
 		int32 CellsPerAxis,
 		float VoxelSize,
 		FVoraxiaVoxelMeshData& OutMesh
+	);
+
+	/*
+	 * Builds one mesh-data set per material tag.
+	 *
+	 * Each Marching Cubes cell assigns its generated surface triangles to the
+	 * material tag stored for that cell. Vertices are intentionally not shared
+	 * between different material sections, because Unreal procedural mesh
+	 * sections own independent vertex buffers.
+	 */
+	static bool BuildIsoSurfaceByMaterial(
+		const TArray<float>& DensitySamples,
+		int32 CellsPerAxis,
+		float VoxelSize,
+		const TArray<FGameplayTag>& CellMaterialTags,
+		FGameplayTag FallbackMaterialTag,
+		TMap<FGameplayTag, FVoraxiaVoxelMeshData>& OutMeshes
 	);
 };
