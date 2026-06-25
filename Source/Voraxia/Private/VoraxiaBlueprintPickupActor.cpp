@@ -11,9 +11,11 @@ AVoraxiaBlueprintPickupActor::AVoraxiaBlueprintPickupActor()
 
 	MeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshComponent"));
 	SetRootComponent(MeshComponent);
-
-	MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	
+	MeshComponent->SetCollisionObjectType(ECC_WorldDynamic);
 	MeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
+	MeshComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 }
 
 void AVoraxiaBlueprintPickupActor::Interact_Implementation(AActor* InteractingActor)

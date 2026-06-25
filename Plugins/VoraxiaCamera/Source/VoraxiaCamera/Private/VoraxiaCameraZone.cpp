@@ -131,19 +131,19 @@ UVoraxiaCameraComponent* AVoraxiaCameraZone::FindCameraComponent(AActor* Actor) 
 
 bool AVoraxiaCameraZone::ShouldAffectActor(const AActor* Actor) const
 {
-	if (!Actor)
+	const APawn* Pawn = Cast<APawn>(Actor);
+
+	/*
+	 * Camera zones are local presentation. On a server, every connected
+	 * player Pawn may be player-controlled, but only the locally viewed Pawn
+	 * should have its camera framing changed on this machine.
+	 */
+	if (!Pawn || !Pawn->IsLocallyControlled())
 	{
 		return false;
 	}
 
-	if (!bOnlyAffectPlayerControlledPawns)
-	{
-		return true;
-	}
-
-	const APawn* Pawn = Cast<APawn>(Actor);
-
-	return Pawn && Pawn->IsPlayerControlled();
+	return !bOnlyAffectPlayerControlledPawns || Pawn->IsPlayerControlled();
 }
 
 void AVoraxiaCameraZone::ApplyZoneFraming(UVoraxiaCameraComponent* CameraComponent) const

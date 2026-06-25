@@ -6,6 +6,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "VoraxiaCameraComponent.h"
@@ -21,6 +22,23 @@ UVoraxiaCameraOcclusionDitherComponent::UVoraxiaCameraOcclusionDitherComponent()
 void UVoraxiaCameraOcclusionDitherComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	/*
+	 * As with the camera component, wait for local possession if this Pawn
+	 * begins play before its owning client is fully established.
+	 */
+	if (IsLocalPresentationOwner())
+	{
+		InitializeLocalPresentation();
+	}
+}
+
+void UVoraxiaCameraOcclusionDitherComponent::InitializeLocalPresentation()
+{
+	if (bLocalPresentationInitialized || !IsLocalPresentationOwner())
+	{
+		return;
+	}
 
 	if (!CameraComponent.IsValid() && bAutoFindCameraComponent)
 	{
@@ -43,6 +61,8 @@ void UVoraxiaCameraOcclusionDitherComponent::BeginPlay()
 			*GetNameSafe(GetOwner())
 		);
 	}
+
+	bLocalPresentationInitialized = true;
 }
 
 void UVoraxiaCameraOcclusionDitherComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -59,6 +79,27 @@ void UVoraxiaCameraOcclusionDitherComponent::TickComponent(
 )
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (!IsLocalPresentationOwner())
+	{
+		if (bLocalPresentationInitialized)
+		{
+			RestoreAllOriginalMaterials();
+			bLocalPresentationInitialized = false;
+		}
+
+		return;
+	}
+
+	if (!bLocalPresentationInitialized)
+	{
+		InitializeLocalPresentation();
+	}
+
+	if (!bLocalPresentationInitialized)
+	{
+		return;
+	}
 
 	if (!CameraComponent.IsValid() && bAutoFindCameraComponent)
 	{
@@ -89,6 +130,12 @@ void UVoraxiaCameraOcclusionDitherComponent::TickComponent(
 	}
 
 	UpdateTrackedComponentFades(DeltaTime);
+}
+
+bool UVoraxiaCameraOcclusionDitherComponent::IsLocalPresentationOwner() const
+{
+	const APawn* OwningPawn = Cast<APawn>(GetOwner());
+	return OwningPawn && OwningPawn->IsLocallyControlled();
 }
 
 void UVoraxiaCameraOcclusionDitherComponent::SetCameraComponent(

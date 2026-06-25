@@ -14,7 +14,9 @@ AVoraxiaBlueprintStorageChest::AVoraxiaBlueprintStorageChest()
 	SetRootComponent(MeshComponent);
 
 	MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	MeshComponent->SetCollisionObjectType(ECC_WorldDynamic);
 	MeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
+	MeshComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 
 void AVoraxiaBlueprintStorageChest::BeginPlay()

@@ -34,7 +34,9 @@ class VORAXIA_API AVoraxiaPlayerCharacter
 	GENERATED_BODY()
 
 public:
-	AVoraxiaPlayerCharacter();
+	explicit AVoraxiaPlayerCharacter(
+		const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get()
+	);
 
 	virtual void Tick(float DeltaTime) override;
 	virtual void PawnClientRestart() override;
@@ -128,6 +130,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> MiningAction;
 	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Voraxia|Input")
+	TObjectPtr<UInputAction> InteractAction;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement")
 	bool bCharacterFacesCameraYaw = true;
 
@@ -177,6 +182,7 @@ private:
 	
 	bool bWantsToSprint = false;
 	bool bFocusToggleActive = false;
+
 	
 	void FocusStarted(const FInputActionValue& Value);
 	void FocusEnded(const FInputActionValue& Value);
@@ -196,4 +202,10 @@ public:
 protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Voraxia|Blueprints")
 	TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>> PhysicalBlueprints;
+	
+protected:
+	void TryInteract();
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Voraxia|Interaction")
+	float InteractionTraceDistance = 300.0f;
 };

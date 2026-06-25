@@ -4,6 +4,7 @@
 
 #include "Player/VoraxiaPlayerCharacter.h"
 
+#include "VoraxiaBlueprintDataAsset.h"
 #include "Algo/Sort.h"
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
@@ -65,51 +66,80 @@ FText SVoraxiaMiningLedgerWidget::GetInventoryText() const
 		return FText::FromString(TEXT("Awaiting player inventory..."));
 	}
 
+	FString InventoryLines;
+
 	const TMap<FGameplayTag, float>& Inventory =
 		Player->GetResourceInventory();
 
+	InventoryLines += TEXT("RESOURCES\n");
+
 	if (Inventory.IsEmpty())
 	{
-		return FText::FromString(TEXT("No resources collected"));
+		InventoryLines += TEXT("- None\n");
 	}
-
-	TArray<TPair<FGameplayTag, float>> SortedEntries;
-	SortedEntries.Reserve(Inventory.Num());
-
-	for (const TPair<FGameplayTag, float>& Entry : Inventory)
+	else
 	{
-		SortedEntries.Add(Entry);
-	}
+		TArray<TPair<FGameplayTag, float>> SortedEntries;
+		SortedEntries.Reserve(Inventory.Num());
 
-	SortedEntries.Sort(
-		[](const TPair<FGameplayTag, float>& Left,
-			const TPair<FGameplayTag, float>& Right)
+		for (const TPair<FGameplayTag, float>& Entry : Inventory)
 		{
-			return Left.Key.ToString() < Right.Key.ToString();
-		}
-	);
-
-	FString InventoryLines;
-
-	for (const TPair<FGameplayTag, float>& Entry : SortedEntries)
-	{
-		FString ResourceName = Entry.Key.ToString();
-
-		int32 LastSeparatorIndex = INDEX_NONE;
-
-		if (ResourceName.FindLastChar(TEXT('.'), LastSeparatorIndex))
-		{
-			ResourceName = ResourceName.Mid(LastSeparatorIndex + 1);
+			SortedEntries.Add(Entry);
 		}
 
-		InventoryLines += FString::Printf(
-			TEXT("%-14s %8.2f\n"),
-			*ResourceName,
-			Entry.Value
+		SortedEntries.Sort(
+			[](const TPair<FGameplayTag, float>& Left,
+				const TPair<FGameplayTag, float>& Right)
+			{
+				return Left.Key.ToString() < Right.Key.ToString();
+			}
 		);
+
+		for (const TPair<FGameplayTag, float>& Entry : SortedEntries)
+		{
+			FString ResourceName = Entry.Key.ToString();
+
+			int32 LastSeparatorIndex = INDEX_NONE;
+
+			if (ResourceName.FindLastChar(TEXT('.'), LastSeparatorIndex))
+			{
+				ResourceName = ResourceName.Mid(LastSeparatorIndex + 1);
+			}
+
+			InventoryLines += FString::Printf(
+				TEXT("- %-14s %8.2f\n"),
+				*ResourceName,
+				Entry.Value
+			);
+		}
 	}
 
-	InventoryLines.TrimEndInline();
+	InventoryLines += TEXT("\nBLUEPRINTS\n");
+
+	const TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>>& Blueprints =
+		Player->GetPhysicalBlueprints();
+
+	if (Blueprints.IsEmpty())
+	{
+		InventoryLines += TEXT("- None");
+	}
+	else
+	{
+		for (const UVoraxiaBlueprintDataAsset* Blueprint : Blueprints)
+		{
+			if (!Blueprint)
+			{
+				continue;
+			}
+
+			InventoryLines += FString::Printf(
+				TEXT("- %s\n"),
+				*Blueprint->DisplayName.ToString()
+			);
+		}
+
+		InventoryLines.TrimEndInline();
+	}
 
 	return FText::FromString(InventoryLines);
 }

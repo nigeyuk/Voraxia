@@ -3,13 +3,16 @@
 #include "Player/VoraxiaPlayerCharacter.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Player/VoraxiaCharacterMovementComponent.h"
 
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
+#include "DrawDebugHelpers.h"
 
+#include "VoraxiaInteractableInterface.h"
 #include "Camera/CameraComponent.h"
 #include "VoraxiaCameraComponent.h"
 #include "Mining/VoraxiaRaptorMiningComponent.h"
@@ -22,7 +25,14 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 
-AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter()
+AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter(
+	const FObjectInitializer& ObjectInitializer
+)
+	: Super(
+		ObjectInitializer.SetDefaultSubobjectClass<
+			UVoraxiaCharacterMovementComponent
+		>(ACharacter::CharacterMovementComponentName)
+	)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -155,7 +165,16 @@ void AVoraxiaPlayerCharacter::Tick(const float DeltaTime)
 
 void AVoraxiaPlayerCharacter::UpdateCharacterFacing(const float DeltaTime)
 {
-	if (!bCharacterFacesCameraYaw || !CameraComponent)
+	/*
+	 * Preserve Voraxia's existing camera-facing body behaviour on the owning
+	 * machine. The custom movement component only records this final yaw so the
+	 * server can replay the matching value within the normal saved-move packet.
+	 */
+	if (
+		!IsLocallyControlled() ||
+		!bCharacterFacesCameraYaw ||
+		!CameraComponent
+	)
 	{
 		return;
 	}
@@ -176,6 +195,12 @@ void AVoraxiaPlayerCharacter::UpdateCharacterFacing(const float DeltaTime)
 	);
 
 	SetActorRotation(NewRotation);
+
+	if (UVoraxiaCharacterMovementComponent* VoraxiaMovement =
+		Cast<UVoraxiaCharacterMovementComponent>(GetCharacterMovement()))
+	{
+		VoraxiaMovement->SetVoraxiaFacingYaw(NewRotation.Yaw);
+	}
 }
 
 void AVoraxiaPlayerCharacter::PawnClientRestart()
@@ -375,6 +400,20 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Voraxia SwapShoulderAction is not assigned."));
+	}
+	
+	if (InteractAction)
+	{
+		EnhancedInputComponent->BindAction(
+			InteractAction,
+			ETriggerEvent::Started,
+			this,
+			&AVoraxiaPlayerCharacter::TryInteract
+	);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Voraxia InteractAction is not assigned."));
 	}
 	
 	if (MiningAction)
@@ -643,4 +682,79 @@ const TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>>& AVoraxiaPlayerCharacter::G
 UVoraxiaBlueprintDataAsset* AVoraxiaPlayerCharacter::GetFirstPhysicalBlueprint() const
 {
 	return PhysicalBlueprints.Num() > 0 ? PhysicalBlueprints[0] : nullptr;
+}
+
+void AVoraxiaPlayerCharacter::TryInteract()
+{
+	UE_LOG(LogTemp, Warning, TEXT("TryInteract fired"));
+
+	if (!CameraComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TryInteract failed: CameraComponent is null."));
+		return;
+	}
+
+	const FVector TraceStart = CameraComponent->GetComponentLocation();
+	const FVector TraceEnd = TraceStart + (CameraComponent->GetForwardVector() * InteractionTraceDistance);
+
+	DrawDebugLine(
+		GetWorld(),
+		TraceStart,
+		TraceEnd,
+		FColor::Green,
+		false,
+		2.0f,
+		0,
+		2.0f
+	);
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(VoraxiaInteractionTrace), false, this);
+
+	const bool bHit = GetWorld()->LineTraceSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_Visibility,
+		QueryParams
+	);
+
+	if (!bHit)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TryInteract: no hit."));
+		return;
+	}
+
+	AActor* HitActor = HitResult.GetActor();
+
+	UE_LOG(
+		LogTemp,
+		Warning,
+		TEXT("TryInteract hit actor: %s"),
+		HitActor ? *HitActor->GetName() : TEXT("None")
+	);
+
+	if (!HitActor)
+	{
+		return;
+	}
+
+	if (HitActor->GetClass()->ImplementsInterface(UVoraxiaInteractableInterface::StaticClass()))
+	{
+		const FText InteractionText =
+			IVoraxiaInteractableInterface::Execute_GetInteractionText(HitActor);
+
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("Interactable: %s"),
+			*InteractionText.ToString()
+		);
+
+		IVoraxiaInteractableInterface::Execute_Interact(HitActor, this);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TryInteract: actor does NOT implement interface."));
+	}
 }

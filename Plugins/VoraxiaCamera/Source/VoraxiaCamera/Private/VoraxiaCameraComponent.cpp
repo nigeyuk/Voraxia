@@ -165,6 +165,24 @@ void UVoraxiaCameraComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	/*
+	 * On network clients, a Pawn can begin play before local possession is
+	 * established. Do not permanently disable this component here: TickComponent
+	 * will initialise it the first frame that this machine owns the Pawn.
+	 */
+	if (IsLocalPresentationOwner())
+	{
+		InitializeLocalPresentation();
+	}
+}
+
+void UVoraxiaCameraComponent::InitializeLocalPresentation()
+{
+	if (bLocalPresentationInitialized || !IsLocalPresentationOwner())
+	{
+		return;
+	}
+
 	if (!TargetCamera && bAutoFindCameraComponent)
 	{
 		if (AActor* Owner = GetOwner())
@@ -180,7 +198,8 @@ void UVoraxiaCameraComponent::BeginPlay()
 
 	InitializeRuntimeState();
 
-	const FRotator OwnerRotation = GetOwner() ? GetOwner()->GetActorRotation() : FRotator::ZeroRotator;
+	const FRotator OwnerRotation =
+		GetOwner() ? GetOwner()->GetActorRotation() : FRotator::ZeroRotator;
 
 	DesiredRotation = FRotator(
 		FMath::Clamp(InitialPitch, MinPitch, MaxPitch),
@@ -212,7 +231,9 @@ void UVoraxiaCameraComponent::BeginPlay()
 			*GetNameSafe(GetOwner())
 		);
 	}
-	
+
+	bLocalPresentationInitialized = true;
+
 	if (bShowSlateDebugPanel)
 	{
 		CreateSlateDebugPanel();
@@ -235,7 +256,17 @@ void UVoraxiaCameraComponent::TickComponent(
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!TargetCamera)
+	if (!IsLocalPresentationOwner())
+	{
+		return;
+	}
+
+	if (!bLocalPresentationInitialized)
+	{
+		InitializeLocalPresentation();
+	}
+
+	if (!bLocalPresentationInitialized || !TargetCamera)
 	{
 		return;
 	}
@@ -275,6 +306,11 @@ FVoraxiaCameraShakeHandle UVoraxiaCameraComponent::PlayCameraShake(
 )
 {
 	FVoraxiaCameraShakeHandle InvalidHandle;
+
+	if (!IsLocalPresentationOwner())
+	{
+		return InvalidHandle;
+	}
 
 	if (!ShakeClass)
 	{
@@ -379,6 +415,12 @@ bool UVoraxiaCameraComponent::IsCameraShakePlaying(const FVoraxiaCameraShakeHand
 int32 UVoraxiaCameraComponent::GetActiveCameraShakeCount() const
 {
 	return ActiveCameraShakes.Num();
+}
+
+bool UVoraxiaCameraComponent::IsLocalPresentationOwner() const
+{
+	const APawn* OwningPawn = Cast<APawn>(GetOwner());
+	return OwningPawn && OwningPawn->IsLocallyControlled();
 }
 
 APlayerCameraManager* UVoraxiaCameraComponent::ResolvePlayerCameraManager() const
@@ -3697,6 +3739,11 @@ bool UVoraxiaCameraComponent::IsSlateDebugPanelVisible() const
 
 void UVoraxiaCameraComponent::CreateSlateDebugPanel()
 {
+	if (!IsLocalPresentationOwner())
+	{
+		return;
+	}
+
 	if (SlateDebugPanelWidget.IsValid())
 	{
 		return;

@@ -965,6 +965,15 @@ private:
 	FVoraxiaCameraShakeHandle MovementCameraShakeHandle;
 	float CurrentMovementCameraShakeScale = 0.0f;
 
+	/* Local-only presentation guard. Camera transforms, shakes, and Slate UI
+	 * must run only for the Pawn viewed by this machine. */
+	bool IsLocalPresentationOwner() const;
+
+	/* Performs the original BeginPlay camera setup once local possession exists. */
+	void InitializeLocalPresentation();
+
+	bool bLocalPresentationInitialized = false;
+
 	APlayerCameraManager* ResolvePlayerCameraManager() const;
 	void UpdateCameraShakeSystem(float DeltaTime);
 	void UpdateActiveCameraShakes();

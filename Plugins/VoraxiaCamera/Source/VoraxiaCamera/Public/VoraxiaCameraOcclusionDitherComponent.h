@@ -136,6 +136,10 @@ private:
 
 	float TraceTimeAccumulator = 0.0f;
 	int32 ActiveOccludingComponentCount = 0;
+	bool bLocalPresentationInitialized = false;
+
+	bool IsLocalPresentationOwner() const;
+	void InitializeLocalPresentation();
 
 	void RefreshOccludingComponents();
 	void UpdateTrackedComponentFades(float DeltaTime);
