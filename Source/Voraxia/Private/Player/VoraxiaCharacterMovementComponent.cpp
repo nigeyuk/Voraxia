@@ -3,6 +3,7 @@
 #include "Player/VoraxiaCharacterMovementComponent.h"
 
 #include "GameFramework/Character.h"
+#include "Player/VoraxiaPlayerCharacter.h"
 #include "Engine/PackageMapClient.h"
 
 namespace VoraxiaCharacterMovement
@@ -45,6 +46,7 @@ void FSavedMove_VoraxiaCharacter::Clear()
 {
 	FSavedMove_Character::Clear();
 	PackedFacingYaw = 0;
+	bWantsToSprint = 0;
 }
 
 bool FSavedMove_VoraxiaCharacter::CanCombineWith(
@@ -67,7 +69,8 @@ bool FSavedMove_VoraxiaCharacter::CanCombineWith(
 	 * with the local camera-facing state during a run-and-turn.
 	 */
 	return NewVoraxiaMove &&
-		NewVoraxiaMove->PackedFacingYaw == PackedFacingYaw;
+		NewVoraxiaMove->PackedFacingYaw == PackedFacingYaw &&
+		NewVoraxiaMove->bWantsToSprint == bWantsToSprint;
 }
 
 void FSavedMove_VoraxiaCharacter::SetMoveFor(
@@ -91,6 +94,14 @@ void FSavedMove_VoraxiaCharacter::SetMoveFor(
 			VoraxiaMovement->GetVoraxiaFacingYaw()
 		)
 		: 0;
+
+	const AVoraxiaPlayerCharacter* VoraxiaCharacter =
+		Character ? Cast<AVoraxiaPlayerCharacter>(Character) : nullptr;
+
+	bWantsToSprint = VoraxiaCharacter &&
+		VoraxiaCharacter->IsSprintRequested()
+		? 1
+		: 0;
 }
 
 void FSavedMove_VoraxiaCharacter::PrepMoveFor(ACharacter* Character)
@@ -113,6 +124,14 @@ void FSavedMove_VoraxiaCharacter::PrepMoveFor(ACharacter* Character)
 			VoraxiaCharacterMovement::UnpackFacingYaw(PackedFacingYaw)
 		);
 	}
+
+	if (AVoraxiaPlayerCharacter* VoraxiaCharacter =
+		Character ? Cast<AVoraxiaPlayerCharacter>(Character) : nullptr)
+	{
+		VoraxiaCharacter->RestorePredictedSprintIntent(
+			bWantsToSprint != 0
+		);
+	}
 }
 
 void FVoraxiaCharacterNetworkMoveData::ClientFillNetworkMoveData(
@@ -129,6 +148,7 @@ void FVoraxiaCharacterNetworkMoveData::ClientFillNetworkMoveData(
 		static_cast<const FSavedMove_VoraxiaCharacter&>(ClientMove);
 
 	PackedFacingYaw = VoraxiaMove.PackedFacingYaw;
+	bWantsToSprint = VoraxiaMove.bWantsToSprint;
 }
 
 bool FVoraxiaCharacterNetworkMoveData::Serialize(
@@ -144,12 +164,18 @@ bool FVoraxiaCharacterNetworkMoveData::Serialize(
 	}
 
 	Ar.SerializeBits(&PackedFacingYaw, 16);
+	Ar.SerializeBits(&bWantsToSprint, 1);
 	return !Ar.IsError();
 }
 
 float FVoraxiaCharacterNetworkMoveData::GetFacingYaw() const
 {
 	return VoraxiaCharacterMovement::UnpackFacingYaw(PackedFacingYaw);
+}
+
+bool FVoraxiaCharacterNetworkMoveData::WantsToSprint() const
+{
+	return bWantsToSprint != 0;
 }
 
 FVoraxiaCharacterNetworkMoveDataContainer::
@@ -229,6 +255,20 @@ void UVoraxiaCharacterMovementComponent::MoveAutonomous(
 		))
 	{
 		ApplyVoraxiaFacingYaw(VoraxiaMoveData->GetFacingYaw());
+
+		if (AVoraxiaPlayerCharacter* VoraxiaCharacter =
+			Cast<AVoraxiaPlayerCharacter>(CharacterOwner))
+		{
+			/*
+			 * Keep sprint intent in this same saved move as the acceleration and
+			 * camera-facing yaw. The server updates MaxWalkSpeed before simulating
+			 * this move, so it does not validate the remote client against walk speed.
+			 */
+			VoraxiaCharacter->ApplyNetworkSprintIntent(
+				VoraxiaMoveData->WantsToSprint(),
+				DeltaTime
+			);
+		}
 	}
 
 	UCharacterMovementComponent::MoveAutonomous(

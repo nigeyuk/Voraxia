@@ -5,10 +5,13 @@
 #include "Player/VoraxiaPlayerCharacter.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Net/UnrealNetwork.h"
 
 AVoraxiaBlueprintStorageChest::AVoraxiaBlueprintStorageChest()
 {
 	PrimaryActorTick.bCanEverTick = false;
+	bReplicates = true;
+	SetReplicateMovement(false);
 
 	MeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshComponent"));
 	SetRootComponent(MeshComponent);
@@ -26,9 +29,25 @@ void AVoraxiaBlueprintStorageChest::BeginPlay()
 	UpdateChestColour();
 }
 
+void AVoraxiaBlueprintStorageChest::GetLifetimeReplicatedProps(
+	TArray<FLifetimeProperty>& OutLifetimeProps
+) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AVoraxiaBlueprintStorageChest, StoredBlueprint);
+}
+
 void AVoraxiaBlueprintStorageChest::Interact_Implementation(AActor* InteractingActor)
 {
-	AVoraxiaPlayerCharacter* PlayerCharacter = Cast<AVoraxiaPlayerCharacter>(InteractingActor);
+	/* Chest contents are shared world state and therefore server-authoritative. */
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AVoraxiaPlayerCharacter* PlayerCharacter =
+		Cast<AVoraxiaPlayerCharacter>(InteractingActor);
+
 	if (!PlayerCharacter)
 	{
 		return;
@@ -36,7 +55,9 @@ void AVoraxiaBlueprintStorageChest::Interact_Implementation(AActor* InteractingA
 
 	if (!StoredBlueprint)
 	{
-		UVoraxiaBlueprintDataAsset* PlayerBlueprint = PlayerCharacter->GetFirstPhysicalBlueprint();
+		UVoraxiaBlueprintDataAsset* PlayerBlueprint =
+			PlayerCharacter->GetFirstPhysicalBlueprint();
+
 		if (!PlayerBlueprint)
 		{
 			return;
@@ -46,6 +67,7 @@ void AVoraxiaBlueprintStorageChest::Interact_Implementation(AActor* InteractingA
 		{
 			StoredBlueprint = PlayerBlueprint;
 			UpdateChestColour();
+			ForceNetUpdate();
 		}
 
 		return;
@@ -55,6 +77,7 @@ void AVoraxiaBlueprintStorageChest::Interact_Implementation(AActor* InteractingA
 	{
 		StoredBlueprint = nullptr;
 		UpdateChestColour();
+		ForceNetUpdate();
 	}
 }
 
@@ -66,6 +89,11 @@ FText AVoraxiaBlueprintStorageChest::GetInteractionText_Implementation() const
 	}
 
 	return NSLOCTEXT("Voraxia", "DepositBlueprint", "Store blueprint");
+}
+
+void AVoraxiaBlueprintStorageChest::OnRep_StoredBlueprint()
+{
+	UpdateChestColour();
 }
 
 void AVoraxiaBlueprintStorageChest::UpdateChestColour()

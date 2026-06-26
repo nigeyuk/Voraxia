@@ -18,6 +18,7 @@ class FSavedMove_VoraxiaCharacter final : public FSavedMove_Character
 {
 public:
 	uint16 PackedFacingYaw = 0;
+	uint8 bWantsToSprint = 0;
 
 	virtual void Clear() override;
 
@@ -44,6 +45,7 @@ public:
 struct FVoraxiaCharacterNetworkMoveData final : public FCharacterNetworkMoveData
 {
 	uint16 PackedFacingYaw = 0;
+	uint8 bWantsToSprint = 0;
 
 	virtual void ClientFillNetworkMoveData(
 		const FSavedMove_Character& ClientMove,
@@ -58,6 +60,7 @@ struct FVoraxiaCharacterNetworkMoveData final : public FCharacterNetworkMoveData
 	) override;
 
 	float GetFacingYaw() const;
+	bool WantsToSprint() const;
 };
 
 /*

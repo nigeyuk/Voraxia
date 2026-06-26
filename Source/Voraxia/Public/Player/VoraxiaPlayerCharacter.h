@@ -41,8 +41,19 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void PawnClientRestart() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void GetLifetimeReplicatedProps(
+		TArray<FLifetimeProperty>& OutLifetimeProps
+	) const override;
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+
+	/*
+	 * Read and restore sprint intent for the custom Character Movement saved
+	 * move. These are internal networking hooks, not gameplay RPCs.
+	 */
+	bool IsSprintRequested() const;
+	void RestorePredictedSprintIntent(bool bShouldSprint);
+	void ApplyNetworkSprintIntent(bool bShouldSprint, float DeltaTime);
 
 	virtual void ReceiveMiningYield_Implementation(
 		const FVoraxiaMiningYield& MiningYield
@@ -78,16 +89,16 @@ public:
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
 	TObjectPtr<UCameraComponent> CameraComponent;
-	
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
 	TObjectPtr<UVoraxiaCameraOcclusionDitherComponent> CameraOcclusionDitherComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Camera")
 	TObjectPtr<UVoraxiaCameraComponent> VoraxiaCameraComponent;
-	
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Voraxia|Mining")
 	TObjectPtr<UVoraxiaRaptorMiningComponent> RaptorMiningComponent;
-	
+
 
 	/*
 	 * Resource-only inventory for the prototype mining loop.
@@ -117,28 +128,28 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> JumpAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> SprintAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> FocusAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> SwapShoulderAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputAction> MiningAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Voraxia|Input")
 	TObjectPtr<UInputAction> InteractAction;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement")
 	bool bCharacterFacesCameraYaw = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement", meta=(EditCondition="bCharacterFacesCameraYaw"))
 	float FaceCameraYawInterpSpeed = 16.0f;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement|Sprint")
 	float WalkSpeed = 500.0f;
 
@@ -150,7 +161,7 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Movement|Sprint")
 	bool bCanSprint = true;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voraxia|Camera|Focus")
 	EVoraxiaFocusInputMode FocusInputMode = EVoraxiaFocusInputMode::Hold;
 
@@ -171,41 +182,71 @@ private:
 	void Move(const FInputActionValue& Value);
 
 	void Look(const FInputActionValue& Value);
-	
+
 	void UpdateCharacterFacing(float DeltaTime);
-	
+
 	void SprintStarted(const FInputActionValue& Value);
 	void SprintEnded(const FInputActionValue& Value);
 	void UpdateSprintSpeed(float DeltaTime);
-	
+
 	void SwapShoulderStarted(const FInputActionValue& Value);
-	
+
 	bool bWantsToSprint = false;
 	bool bFocusToggleActive = false;
 
-	
+
 	void FocusStarted(const FInputActionValue& Value);
 	void FocusEnded(const FInputActionValue& Value);
-	
+
 	void MiningStarted(const FInputActionValue& Value);
 	void MiningEnded(const FInputActionValue& Value);
-	
+
 public:
 	bool AddPhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData);
 	bool RemovePhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData);
 	bool HasPhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData) const;
 
 	const TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>>& GetPhysicalBlueprints() const;
-	
+
 	UVoraxiaBlueprintDataAsset* GetFirstPhysicalBlueprint() const;
-	
+
 protected:
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Voraxia|Blueprints")
+	UPROPERTY(
+		ReplicatedUsing = OnRep_PhysicalBlueprints,
+		VisibleInstanceOnly,
+		BlueprintReadOnly,
+		Category = "Voraxia|Blueprints"
+	)
 	TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>> PhysicalBlueprints;
-	
-protected:
+
+	UFUNCTION()
+	void OnRep_PhysicalBlueprints();
+
 	void TryInteract();
+
+	UFUNCTION(Server, Reliable)
+	void ServerTryInteract(AActor* RequestedActor);
+
+	void TryInteractServerAuthoritative(AActor* RequestedActor);
+
+	bool IsInteractionTargetValid(
+		const AActor* InteractionTarget
+	) const;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Voraxia|Interaction")
 	float InteractionTraceDistance = 300.0f;
+
+	/*
+	 * Allows a third-person camera to select a nearby object slightly farther
+	 * from the Pawn than the direct eye-to-object trace would imply. The server
+	 * still validates distance and line of sight before it performs interaction.
+	 */
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "Voraxia|Interaction",
+		meta = (ClampMin = "0.0")
+	)
+	float InteractionServerValidationTolerance = 125.0f;
+
 };

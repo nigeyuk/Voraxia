@@ -24,6 +24,7 @@
 
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "Net/UnrealNetwork.h"
 
 AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter(
 	const FObjectInitializer& ObjectInitializer
@@ -56,10 +57,10 @@ AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter(
 	CameraComponent->SetupAttachment(RootComponent);
 	CameraComponent->bUsePawnControlRotation = false;
 
-	VoraxiaCameraComponent = 
+	VoraxiaCameraComponent =
 	CreateDefaultSubobject<UVoraxiaCameraComponent>
 		(TEXT("VoraxiaCameraComponent"));
-	
+
 	RaptorMiningComponent =
 	CreateDefaultSubobject<UVoraxiaRaptorMiningComponent>(
 		TEXT("RaptorMiningComponent")
@@ -74,6 +75,23 @@ AVoraxiaPlayerCharacter::AVoraxiaPlayerCharacter(
 		CreateDefaultSubobject<UVoraxiaCameraOcclusionDitherComponent>(
 			TEXT("CameraOcclusionDitherComponent")
 		);
+}
+
+void AVoraxiaPlayerCharacter::GetLifetimeReplicatedProps(
+	TArray<FLifetimeProperty>& OutLifetimeProps
+) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	/*
+	 * Physical blueprints are personal inventory. Only the owning client needs
+	 * the list, while the server remains the single authority that changes it.
+	 */
+	DOREPLIFETIME_CONDITION(
+		AVoraxiaPlayerCharacter,
+		PhysicalBlueprints,
+		COND_OwnerOnly
+	);
 }
 
 void AVoraxiaPlayerCharacter::ReceiveMiningYield_Implementation(
@@ -159,7 +177,16 @@ void AVoraxiaPlayerCharacter::Tick(const float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	UpdateSprintSpeed(DeltaTime);
+	/*
+	 * Locally controlled characters retain the original smooth sprint response.
+	 * Remote-player server copies update their speed inside MoveAutonomous using
+	 * the sprint flag carried by the matching saved movement move.
+	 */
+	if (IsLocallyControlled())
+	{
+		UpdateSprintSpeed(DeltaTime);
+	}
+
 	UpdateCharacterFacing(DeltaTime);
 }
 
@@ -401,7 +428,7 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Voraxia SwapShoulderAction is not assigned."));
 	}
-	
+
 	if (InteractAction)
 	{
 		EnhancedInputComponent->BindAction(
@@ -415,7 +442,7 @@ void AVoraxiaPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Voraxia InteractAction is not assigned."));
 	}
-	
+
 	if (MiningAction)
 	{
 		EnhancedInputComponent->BindAction(
@@ -507,6 +534,27 @@ void AVoraxiaPlayerCharacter::Look(const FInputActionValue& Value)
 
 	VoraxiaCameraComponent->AddYawInput(LookValue.X);
 	VoraxiaCameraComponent->AddPitchInput(LookValue.Y);
+}
+
+bool AVoraxiaPlayerCharacter::IsSprintRequested() const
+{
+	return bWantsToSprint && bCanSprint;
+}
+
+void AVoraxiaPlayerCharacter::RestorePredictedSprintIntent(
+	const bool bShouldSprint
+)
+{
+	bWantsToSprint = bShouldSprint && bCanSprint;
+}
+
+void AVoraxiaPlayerCharacter::ApplyNetworkSprintIntent(
+	const bool bShouldSprint,
+	const float DeltaTime
+)
+{
+	RestorePredictedSprintIntent(bShouldSprint);
+	UpdateSprintSpeed(DeltaTime);
 }
 
 void AVoraxiaPlayerCharacter::SprintStarted(const FInputActionValue& Value)
@@ -643,9 +691,11 @@ void AVoraxiaPlayerCharacter::MiningEnded(
 	RaptorMiningComponent->StopMining();
 }
 
-bool AVoraxiaPlayerCharacter::AddPhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData)
+bool AVoraxiaPlayerCharacter::AddPhysicalBlueprint(
+	UVoraxiaBlueprintDataAsset* BlueprintData
+)
 {
-	if (!BlueprintData)
+	if (!HasAuthority() || !BlueprintData)
 	{
 		return false;
 	}
@@ -656,46 +706,69 @@ bool AVoraxiaPlayerCharacter::AddPhysicalBlueprint(UVoraxiaBlueprintDataAsset* B
 	}
 
 	PhysicalBlueprints.Add(BlueprintData);
+	ForceNetUpdate();
 	return true;
 }
 
-bool AVoraxiaPlayerCharacter::RemovePhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData)
+bool AVoraxiaPlayerCharacter::RemovePhysicalBlueprint(
+	UVoraxiaBlueprintDataAsset* BlueprintData
+)
 {
-	if (!BlueprintData)
+	if (!HasAuthority() || !BlueprintData)
 	{
 		return false;
 	}
 
-	return PhysicalBlueprints.Remove(BlueprintData) > 0;
+	const bool bRemoved = PhysicalBlueprints.Remove(BlueprintData) > 0;
+
+	if (bRemoved)
+	{
+		ForceNetUpdate();
+	}
+
+	return bRemoved;
 }
 
-bool AVoraxiaPlayerCharacter::HasPhysicalBlueprint(UVoraxiaBlueprintDataAsset* BlueprintData) const
+bool AVoraxiaPlayerCharacter::HasPhysicalBlueprint(
+	UVoraxiaBlueprintDataAsset* BlueprintData
+) const
 {
 	return BlueprintData && PhysicalBlueprints.Contains(BlueprintData);
 }
 
-const TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>>& AVoraxiaPlayerCharacter::GetPhysicalBlueprints() const
+const TArray<TObjectPtr<UVoraxiaBlueprintDataAsset>>&
+AVoraxiaPlayerCharacter::GetPhysicalBlueprints() const
 {
 	return PhysicalBlueprints;
 }
 
-UVoraxiaBlueprintDataAsset* AVoraxiaPlayerCharacter::GetFirstPhysicalBlueprint() const
+UVoraxiaBlueprintDataAsset*
+AVoraxiaPlayerCharacter::GetFirstPhysicalBlueprint() const
 {
 	return PhysicalBlueprints.Num() > 0 ? PhysicalBlueprints[0] : nullptr;
 }
 
+void AVoraxiaPlayerCharacter::OnRep_PhysicalBlueprints()
+{
+	/*
+	 * SVoraxiaMiningLedgerWidget reads GetPhysicalBlueprints() through a Slate
+	 * text binding, so it refreshes naturally on the next paint. This hook is
+	 * intentionally kept for later inventory UI events and sound feedback.
+	 */
+}
+
 void AVoraxiaPlayerCharacter::TryInteract()
 {
-	UE_LOG(LogTemp, Warning, TEXT("TryInteract fired"));
+	UE_LOG(LogTemp, Verbose, TEXT("Voraxia interaction request started."));
 
-	if (!CameraComponent)
+	if (!CameraComponent || !GetWorld())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TryInteract failed: CameraComponent is null."));
 		return;
 	}
 
 	const FVector TraceStart = CameraComponent->GetComponentLocation();
-	const FVector TraceEnd = TraceStart + (CameraComponent->GetForwardVector() * InteractionTraceDistance);
+	const FVector TraceEnd = TraceStart +
+		(CameraComponent->GetForwardVector() * InteractionTraceDistance);
 
 	DrawDebugLine(
 		GetWorld(),
@@ -709,7 +782,11 @@ void AVoraxiaPlayerCharacter::TryInteract()
 	);
 
 	FHitResult HitResult;
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(VoraxiaInteractionTrace), false, this);
+	FCollisionQueryParams QueryParams(
+		SCENE_QUERY_STAT(VoraxiaInteractionTrace),
+		false,
+		this
+	);
 
 	const bool bHit = GetWorld()->LineTraceSingleByChannel(
 		HitResult,
@@ -719,42 +796,133 @@ void AVoraxiaPlayerCharacter::TryInteract()
 		QueryParams
 	);
 
-	if (!bHit)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TryInteract: no hit."));
-		return;
-	}
+	AActor* HitActor = bHit ? HitResult.GetActor() : nullptr;
 
-	AActor* HitActor = HitResult.GetActor();
-
-	UE_LOG(
-		LogTemp,
-		Warning,
-		TEXT("TryInteract hit actor: %s"),
-		HitActor ? *HitActor->GetName() : TEXT("None")
-	);
-
-	if (!HitActor)
+	if (
+		!HitActor ||
+		!HitActor->GetClass()->ImplementsInterface(
+			UVoraxiaInteractableInterface::StaticClass()
+		)
+	)
 	{
 		return;
 	}
 
-	if (HitActor->GetClass()->ImplementsInterface(UVoraxiaInteractableInterface::StaticClass()))
+	/*
+	 * The local trace is an intent selector only. The server independently
+	 * validates range and line of sight, then performs the state mutation.
+	 */
+	if (HasAuthority())
 	{
-		const FText InteractionText =
-			IVoraxiaInteractableInterface::Execute_GetInteractionText(HitActor);
-
-		UE_LOG(
-			LogTemp,
-			Warning,
-			TEXT("Interactable: %s"),
-			*InteractionText.ToString()
-		);
-
-		IVoraxiaInteractableInterface::Execute_Interact(HitActor, this);
+		TryInteractServerAuthoritative(HitActor);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TryInteract: actor does NOT implement interface."));
+		ServerTryInteract(HitActor);
 	}
+}
+
+void AVoraxiaPlayerCharacter::ServerTryInteract_Implementation(
+	AActor* RequestedActor
+)
+{
+	TryInteractServerAuthoritative(RequestedActor);
+}
+
+void AVoraxiaPlayerCharacter::TryInteractServerAuthoritative(
+	AActor* RequestedActor
+)
+{
+	if (!HasAuthority() || !IsInteractionTargetValid(RequestedActor))
+	{
+		return;
+	}
+
+	IVoraxiaInteractableInterface::Execute_Interact(
+		RequestedActor,
+		this
+	);
+}
+
+bool AVoraxiaPlayerCharacter::IsInteractionTargetValid(
+	const AActor* InteractionTarget
+) const
+{
+	if (
+		!InteractionTarget ||
+		InteractionTarget == this ||
+		!InteractionTarget->GetClass()->ImplementsInterface(
+			UVoraxiaInteractableInterface::StaticClass()
+		) ||
+		!GetWorld()
+	)
+	{
+		return false;
+	}
+
+	FVector TargetOrigin = FVector::ZeroVector;
+	FVector TargetExtent = FVector::ZeroVector;
+	InteractionTarget->GetActorBounds(
+		true,
+		TargetOrigin,
+		TargetExtent
+	);
+
+	const FVector PlayerLocation = GetActorLocation();
+	const FVector ClosestTargetPoint(
+		FMath::Clamp(
+			PlayerLocation.X,
+			TargetOrigin.X - TargetExtent.X,
+			TargetOrigin.X + TargetExtent.X
+		),
+		FMath::Clamp(
+			PlayerLocation.Y,
+			TargetOrigin.Y - TargetExtent.Y,
+			TargetOrigin.Y + TargetExtent.Y
+		),
+		FMath::Clamp(
+			PlayerLocation.Z,
+			TargetOrigin.Z - TargetExtent.Z,
+			TargetOrigin.Z + TargetExtent.Z
+		)
+	);
+
+	const float MaximumDistance = FMath::Max(
+		0.0f,
+		InteractionTraceDistance + InteractionServerValidationTolerance
+	);
+
+	if (
+		FVector::DistSquared(PlayerLocation, ClosestTargetPoint) >
+		FMath::Square(MaximumDistance)
+	)
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(
+		SCENE_QUERY_STAT(VoraxiaServerInteractionValidation),
+		false,
+		this
+	);
+
+	FHitResult VisibilityHit;
+	const FVector TraceStart = PlayerLocation +
+		FVector(0.0f, 0.0f, BaseEyeHeight);
+
+	if (
+		GetWorld()->LineTraceSingleByChannel(
+			VisibilityHit,
+			TraceStart,
+			ClosestTargetPoint,
+			ECC_Visibility,
+			QueryParams
+		) &&
+		VisibilityHit.GetActor() != InteractionTarget
+	)
+	{
+		return false;
+	}
+
+	return true;
 }

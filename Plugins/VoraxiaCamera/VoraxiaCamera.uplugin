@@ -1,10 +1,10 @@
-﻿{
+{
 	"FileVersion": 3,
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "VoraxiaCamera",
 	"Description": "Manual pivot based camera system for Voraxia.  No springarm version.",
-	"Category": "Other",
+	"Category": "Voraxia",
 	"CreatedBy": "Coding Custard Studios",
 	"CreatedByURL": "",
 	"DocsURL": "",
@@ -19,5 +19,6 @@
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
 		}
-	]
+	],
+	"SupportURL": ""
 }
