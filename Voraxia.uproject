@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.7",
+	"EngineAssociation": "5.8",
 	"Category": "Games",
 	"Description": "Blank C++ Unreal project skeleton for Voraxia.",
 	"Modules": [

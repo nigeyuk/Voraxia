@@ -258,10 +258,47 @@ void AVoraxiaPlayerCharacter::EndPlay(
 	Super::EndPlay(EndPlayReason);
 }
 
+bool AVoraxiaPlayerCharacter::ShouldCreateMiningLedgerWidget() const
+{
+	if (MiningLedgerAllowedMap.IsNull())
+	{
+		return false;
+	}
+
+	const UWorld* CurrentWorld = GetWorld();
+
+	if (!CurrentWorld)
+	{
+		return false;
+	}
+
+	const FString AllowedMapPackageName =
+		MiningLedgerAllowedMap.ToSoftObjectPath().GetLongPackageName();
+
+	if (AllowedMapPackageName.IsEmpty())
+	{
+		return false;
+	}
+
+	/*
+	 * PIE gives each play session an instanced package name such as
+	 * UEDPIE_0_MiningTest. Remove that prefix before comparing it against the
+	 * selected map asset, so the rule behaves the same in PIE and a packaged
+	 * build.
+	 */
+	const FString CurrentMapPackageName = UWorld::RemovePIEPrefix(
+		CurrentWorld->GetOutermost()->GetName(),
+		nullptr
+	);
+
+	return CurrentMapPackageName == AllowedMapPackageName;
+}
+
 void AVoraxiaPlayerCharacter::AddMiningLedgerWidget()
 {
 	if (
 		!IsLocallyControlled() ||
+		!ShouldCreateMiningLedgerWidget() ||
 		MiningLedgerWidget.IsValid() ||
 		!GEngine ||
 		!GEngine->GameViewport

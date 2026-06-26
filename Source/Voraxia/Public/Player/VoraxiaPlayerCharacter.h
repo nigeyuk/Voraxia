@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "Engine/World.h"
 #include "Mining/VoraxiaMiningInventoryReceiver.h"
 #include "VoraxiaPlayerCharacter.generated.h"
 
@@ -114,6 +115,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voraxia|Inventory|Debug")
 	bool bLogMiningLedgerUpdates = true;
 
+	/*
+	 * The mining ledger is a development HUD for the current mining test map.
+	 * Leave this unset to suppress the widget everywhere. Assign the intended
+	 * map asset in the player Blueprint to show it only on that map.
+	 */
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "Voraxia|Mining|Ledger"
+	)
+	TSoftObjectPtr<UWorld> MiningLedgerAllowedMap;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Voraxia|Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
@@ -174,6 +187,7 @@ protected:
 private:
 	void AddDefaultMappingContext();
 
+	bool ShouldCreateMiningLedgerWidget() const;
 	void AddMiningLedgerWidget();
 	void RemoveMiningLedgerWidget();
 

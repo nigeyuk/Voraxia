@@ -1,3 +1,5 @@
+// Copyright 2026 Coding Custard Studios.
+
 #pragma once
 
 #include "Modules/ModuleInterface.h"
