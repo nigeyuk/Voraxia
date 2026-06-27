@@ -12,6 +12,7 @@
 #include "Planet/VoraxiaPlanetActor.h"
 #include "Planet/VoraxiaPlanetDefinition.h"
 #include "Planet/VoraxiaPlanetMath.h"
+#include "Terrain/VoraxiaPlanetTerrainGenerator.h"
 
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
@@ -111,6 +112,8 @@ namespace
 	 * @param RuntimeState Valid replicated planet state.
 	 * @param PatchResolution Number of generated quads along each patch edge.
 	 * @param PreviewPlanetRadiusCentimetres Local compressed preview radius.
+	 * @param bApplyMacroTerrain Whether deterministic macro terrain should offset vertices.
+	 * @param VisualTerrainHeightExaggeration Preview-only multiplier applied to sampled height.
 	 * @param bUseDebugVertexColours Whether vertices should receive the supplied colour.
 	 * @param DebugColour Stable preview colour for this chunk.
 	 * @param OutMesh Receives generated Dynamic Mesh geometry.
@@ -122,6 +125,8 @@ namespace
 		const FVoraxiaPlanetRuntimeState& RuntimeState,
 		const int32 PatchResolution,
 		const double PreviewPlanetRadiusCentimetres,
+		const bool bApplyMacroTerrain,
+		const double VisualTerrainHeightExaggeration,
 		const bool bUseDebugVertexColours,
 		const FLinearColor& DebugColour,
 		FDynamicMesh3& OutMesh)
@@ -144,6 +149,17 @@ namespace
 
 		const double SafePreviewRadiusCentimetres =
 			FMath::Max(100.0, PreviewPlanetRadiusCentimetres);
+
+		/**
+		 * Terrain amplitude is intentionally exaggerated only for this compact
+		 * inspection globe. It does not alter the planet definition, replicated
+		 * runtime state, deterministic terrain sample, or future world-scale mesh.
+		 */
+		const double SafeVisualTerrainHeightExaggeration =
+			FMath::Clamp(
+				VisualTerrainHeightExaggeration,
+				0.0,
+				250.0);
 
 		const double PlanetRadiusMetres =
 			RuntimeState.RadiusMetres;
@@ -259,15 +275,44 @@ namespace
 				}
 
 				/**
-				 * This is the first actual terrain-surface rule:
+				 * Macro terrain is sampled in global direction space rather than
+				 * face-local coordinates. This makes the height field continuous at
+				 * every cube-face seam.
 				 *
-				 * Position = CubeSphereDirection * ReferenceRadius
-				 *
-				 * Later, deterministic terrain height is added radially here.
-				 * For now, height is exactly zero everywhere.
+				 * The optional visual exaggeration affects only the compressed editor
+				 * preview. World-scale terrain and gameplay will use the unmodified
+				 * deterministic height sample.
 				 */
+				double TerrainHeightMetres = 0.0;
+
+				if (bApplyMacroTerrain)
+				{
+					FVoraxiaPlanetTerrainSample TerrainSample;
+
+					if (!VoraxiaPlanetTerrain::SampleMacroTerrain(
+						RuntimeState,
+						UnitDirection,
+						TerrainSample))
+					{
+						return false;
+					}
+
+					TerrainHeightMetres =
+						TerrainSample.HeightMetres
+						* SafeVisualTerrainHeightExaggeration;
+				}
+
+				const double SurfaceRadiusMetres =
+					PlanetRadiusMetres + TerrainHeightMetres;
+
+				if (!FMath::IsFinite(SurfaceRadiusMetres)
+					|| SurfaceRadiusMetres <= 0.0)
+				{
+					return false;
+				}
+
 				const FVector3d PlanetLocalPositionMetres =
-					UnitDirection * PlanetRadiusMetres;
+					UnitDirection * SurfaceRadiusMetres;
 
 				const FVector3d PreviewPositionCentimetres =
 					PlanetLocalPositionMetres
@@ -370,6 +415,8 @@ namespace
 	 * @param WholePlanetPreviewLevel Quadtree level to generate across every face.
 	 * @param PatchResolution Number of generated quads along every patch edge.
 	 * @param PreviewPlanetRadiusCentimetres Local compressed preview radius.
+	 * @param bApplyMacroTerrain Whether deterministic macro terrain should offset vertices.
+	 * @param VisualTerrainHeightExaggeration Preview-only multiplier applied to sampled height.
 	 * @param bUseDebugVertexColours Whether patches should receive stable debug colours.
 	 * @param DebugColourIntensity Brightness multiplier applied to the diagnostic palette.
 	 * @param OutMesh Receives the merged planet preview mesh.
@@ -381,6 +428,8 @@ namespace
 		const int32 WholePlanetPreviewLevel,
 		const int32 PatchResolution,
 		const double PreviewPlanetRadiusCentimetres,
+		const bool bApplyMacroTerrain,
+		const double VisualTerrainHeightExaggeration,
 		const bool bUseDebugVertexColours,
 		const float DebugColourIntensity,
 		FDynamicMesh3& OutMesh)
@@ -434,6 +483,8 @@ namespace
 						RuntimeState,
 						PatchResolution,
 						PreviewPlanetRadiusCentimetres,
+						bApplyMacroTerrain,
+						VisualTerrainHeightExaggeration,
 						bUseDebugVertexColours,
 						GetChunkDebugColour(
 							ChunkId,
@@ -560,6 +611,8 @@ RefreshFromPlanetRuntimeState(
 			WholePlanetPreviewLevel,
 			PreviewPatchResolution,
 			PreviewPlanetRadiusCentimetres,
+			bApplyMacroTerrain,
+			VisualTerrainHeightExaggeration,
 			bUseChunkDebugColours,
 			DebugColourIntensity,
 			GeneratedMesh);
@@ -588,6 +641,8 @@ RefreshFromPlanetRuntimeState(
 					RuntimeState,
 					PreviewPatchResolution,
 					PreviewPlanetRadiusCentimetres,
+					bApplyMacroTerrain,
+					VisualTerrainHeightExaggeration,
 					bUseChunkDebugColours,
 					GetChunkDebugColour(
 						ChunkId,
@@ -646,6 +701,12 @@ PostEditChangeProperty(
 		PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
 			bGeneratePreviewMesh)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			bApplyMacroTerrain)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			VisualTerrainHeightExaggeration)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
 			bUseChunkDebugColours)
@@ -726,6 +787,11 @@ SanitizePreviewSettings()
 		DebugColourIntensity,
 		0.10f,
 		2.00f);
+
+	VisualTerrainHeightExaggeration = FMath::Clamp(
+		VisualTerrainHeightExaggeration,
+		0.0,
+		250.0);
 
 	/**
 	 * Whole-planet mode is intentionally capped at Level 3. At the default

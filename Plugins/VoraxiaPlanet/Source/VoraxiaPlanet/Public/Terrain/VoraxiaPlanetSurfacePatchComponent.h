@@ -25,7 +25,7 @@ struct FVoraxiaPlanetRuntimeState;
  * - It receives replicated planet runtime state from its owning planet actor.
  * - It independently reconstructs the same patch-grid geometry on server and clients.
  * - It does not replicate generated vertices, triangles, collision, or mesh buffers.
- * - It currently generates only a smooth reference-sphere shell with no terrain noise.
+ * - It can optionally apply deterministic macro-terrain height from the planet generator.
  * - It can assign deterministic per-patch vertex colours for visual diagnostics.
  * - It can generate either one adjacent patch region or all six cube faces.
  * - It deliberately scales the real planet down into a local preview radius.
@@ -34,8 +34,8 @@ struct FVoraxiaPlanetRuntimeState;
  *
  * The purpose of this first mesh is to validate that a real
  * FVoraxiaPlanetChunkId, and its selected adjacent region, produce the expected
- * cube-sphere patch geometry before we add LOD, deterministic height generation,
- * collision, edits, or replication of terrain operations.
+ * cube-sphere patch geometry before we add streaming LOD, collision, edits, or
+ * replication of terrain operations.
  */
 UCLASS(
 	ClassGroup = (Voraxia),
@@ -116,6 +116,42 @@ protected:
 		BlueprintReadOnly,
 		Category = "Voraxia Planet|Terrain Preview")
 	bool bGeneratePreviewMesh = true;
+
+	/**
+	 * @brief Applies deterministic macro-terrain height to preview vertices.
+	 *
+	 * Terrain height is sampled from the immutable runtime state and global
+	 * planet direction, making it continuous across cube-face and chunk seams.
+	 * This affects only locally generated preview geometry, never replicated
+	 * terrain data, persistent edits, or the planet definition itself.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Macro Terrain")
+	bool bApplyMacroTerrain = true;
+
+	/**
+	 * @brief Preview-only multiplier applied to macro terrain height.
+	 *
+	 * A true-scale planet has mountain ranges that are visually tiny when
+	 * compressed into a 30-metre diagnostic globe. This multiplier exaggerates
+	 * only the radial terrain displacement after deterministic sampling.
+	 *
+	 * @warning This is an editor and local-preview presentation control. It must
+	 * never be used as part of terrain persistence, replication, collision, or
+	 * gameplay coordinates.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Macro Terrain",
+		meta = (
+			ClampMin = "0.0",
+			ClampMax = "250.0",
+			UIMin = "0.0",
+			UIMax = "100.0"))
+	double VisualTerrainHeightExaggeration = 40.0;
 
 	/**
 	 * @brief Enables deterministic per-chunk vertex colours for the preview mesh.
