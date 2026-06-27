@@ -2,7 +2,7 @@
 
 /**
  * @file VoraxiaPlanetSurfacePatchComponent.cpp
- * @brief Implementation of the local cube-sphere terrain patch preview component.
+ * @brief Implementation of the local cube-sphere terrain patch-grid preview component.
  */
 
 #include "Terrain/VoraxiaPlanetSurfacePatchComponent.h"
@@ -304,17 +304,44 @@ RefreshFromPlanetRuntimeState(
 		return;
 	}
 
-	const FVoraxiaPlanetChunkId PreviewChunkId =
+	const FVoraxiaPlanetChunkId BaseChunkId =
 		BuildPreviewChunkId(RuntimeState);
 
 	FDynamicMesh3 GeneratedMesh;
+	bool bGeneratedAnyPatch = false;
 
-	if (!BuildReferenceSpherePatchMesh(
-		PreviewChunkId,
-		RuntimeState,
-		PreviewPatchResolution,
-		PreviewPlanetRadiusCentimetres,
-		GeneratedMesh))
+	/**
+	 * The preview deliberately merges adjacent chunks into one Dynamic Mesh.
+	 *
+	 * This is a visual validation tool, not the final streaming representation.
+	 * Production terrain will retain independently streamed, culled, collision-
+	 * bearing chunk components. Building the region in one mesh here keeps the
+	 * Details-panel preview lightweight while exposing seams between addresses.
+	 */
+	for (int32 OffsetY = 0; OffsetY < PreviewChunkSpanY; ++OffsetY)
+	{
+		for (int32 OffsetX = 0; OffsetX < PreviewChunkSpanX; ++OffsetX)
+		{
+			FVoraxiaPlanetChunkId ChunkId = BaseChunkId;
+			ChunkId.X += OffsetX;
+			ChunkId.Y += OffsetY;
+
+			if (!BuildReferenceSpherePatchMesh(
+				ChunkId,
+				RuntimeState,
+				PreviewPatchResolution,
+				PreviewPlanetRadiusCentimetres,
+				GeneratedMesh))
+			{
+				ClearPreviewMesh();
+				return;
+			}
+
+			bGeneratedAnyPatch = true;
+		}
+	}
+
+	if (!bGeneratedAnyPatch)
 	{
 		ClearPreviewMesh();
 		return;
@@ -369,6 +396,12 @@ PostEditChangeProperty(
 			PreviewChunkY)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewChunkSpanX)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewChunkSpanY)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
 			PreviewPatchResolution)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
@@ -408,6 +441,21 @@ SanitizePreviewSettings()
 		PreviewChunkY,
 		0,
 		FMath::Max(0, PatchesPerAxis - 1));
+
+	/**
+	 * Limit the visual preview region to eight chunks along either axis and
+	 * keep it wholly inside the selected cube face. This is a tooling guard,
+	 * not a runtime streaming limit.
+	 */
+	PreviewChunkSpanX = FMath::Clamp(
+		PreviewChunkSpanX,
+		1,
+		FMath::Min(8, PatchesPerAxis - PreviewChunkX));
+
+	PreviewChunkSpanY = FMath::Clamp(
+		PreviewChunkSpanY,
+		1,
+		FMath::Min(8, PatchesPerAxis - PreviewChunkY));
 
 	PreviewPatchResolution = FMath::Clamp(
 		PreviewPatchResolution,

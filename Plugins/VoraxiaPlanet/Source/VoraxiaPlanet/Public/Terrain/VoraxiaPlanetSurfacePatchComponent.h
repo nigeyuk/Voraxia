@@ -2,7 +2,7 @@
 
 /**
  * @file VoraxiaPlanetSurfacePatchComponent.h
- * @brief Local visual preview component for one deterministic planet terrain patch.
+ * @brief Local visual preview component for a deterministic grid of planet terrain patches.
  */
 
 #pragma once
@@ -18,12 +18,12 @@ struct FPropertyChangedEvent;
 struct FVoraxiaPlanetRuntimeState;
 
 /**
- * @brief Builds a single cube-sphere terrain patch as a local Dynamic Mesh preview.
+ * @brief Builds a deterministic cube-sphere terrain-patch grid as one local Dynamic Mesh preview.
  *
  * This component is intentionally a visual prototype:
  *
  * - It receives replicated planet runtime state from its owning planet actor.
- * - It independently reconstructs the same patch geometry on server and clients.
+ * - It independently reconstructs the same patch-grid geometry on server and clients.
  * - It does not replicate generated vertices, triangles, collision, or mesh buffers.
  * - It currently generates only a smooth reference-sphere shell with no terrain noise.
  * - It deliberately scales the real planet down into a local preview radius.
@@ -31,7 +31,8 @@ struct FVoraxiaPlanetRuntimeState;
  * @warning This is not the final streaming terrain component.
  *
  * The purpose of this first mesh is to validate that a real
- * FVoraxiaPlanetChunkId produces the expected cube-sphere patch geometry before
+ * FVoraxiaPlanetChunkId, and its selected adjacent region, produce the expected
+ * cube-sphere patch geometry before
  * we add LOD, deterministic height generation, collision, edits, or replication
  * of terrain operations.
  */
@@ -159,6 +160,34 @@ protected:
 	int32 PreviewChunkY = 0;
 
 	/**
+	 * @brief Number of adjacent chunks generated in the positive U direction.
+	 *
+	 * A value of one renders only the selected chunk. Larger values render a
+	 * rectangular preview region beginning at PreviewChunkX. The range is
+	 * clamped so it never crosses the current cube-face boundary.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Chunk",
+		meta = (ClampMin = "1", ClampMax = "8"))
+	int32 PreviewChunkSpanX = 1;
+
+	/**
+	 * @brief Number of adjacent chunks generated in the positive V direction.
+	 *
+	 * A value of one renders only the selected chunk. Larger values render a
+	 * rectangular preview region beginning at PreviewChunkY. The range is
+	 * clamped so it never crosses the current cube-face boundary.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Chunk",
+		meta = (ClampMin = "1", ClampMax = "8"))
+	int32 PreviewChunkSpanY = 1;
+
+	/**
 	 * @brief Number of generated quads along each patch edge.
 	 *
 	 * A value of 32 creates 33 x 33 vertices for the outward-facing planet patch.
@@ -187,11 +216,11 @@ protected:
 
 private:
 	/**
-	 * @brief Constructs the deterministic patch address used for this preview.
+	 * @brief Constructs the base deterministic patch address used for this preview.
 	 *
 	 * @param RuntimeState Valid replicated planet runtime state.
 	 *
-	 * @return Stable chunk identity containing the runtime planet ID.
+	 * @return Stable base chunk identity containing the runtime planet ID.
 	 */
 	FVoraxiaPlanetChunkId BuildPreviewChunkId(
 		const FVoraxiaPlanetRuntimeState& RuntimeState) const;
