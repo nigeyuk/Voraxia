@@ -7,10 +7,15 @@
 
 #include "Terrain/VoraxiaPlanetSurfacePatchComponent.h"
 
+#include "Planet/VoraxiaPlanetActor.h"
 #include "Planet/VoraxiaPlanetDefinition.h"
 #include "Planet/VoraxiaPlanetMath.h"
 
 #include "DynamicMesh/DynamicMesh3.h"
+
+#if WITH_EDITOR
+#include "UObject/UnrealType.h"
+#endif
 
 namespace
 {
@@ -231,9 +236,68 @@ UVoraxiaPlanetSurfacePatchComponent()
 }
 
 void UVoraxiaPlanetSurfacePatchComponent::
+RebuildPreviewMesh()
+{
+	SanitizePreviewSettings();
+
+	if (!bGeneratePreviewMesh)
+	{
+		ClearPreviewMesh();
+		return;
+	}
+
+	AVoraxiaPlanetActor* PlanetActor =
+		Cast<AVoraxiaPlanetActor>(GetOwner());
+
+	if (!IsValid(PlanetActor))
+	{
+		ClearPreviewMesh();
+		return;
+	}
+
+	const FVoraxiaPlanetRuntimeState RuntimeState =
+		PlanetActor->GetPlanetRuntimeState();
+
+	if (RuntimeState.IsValid())
+	{
+		RefreshFromPlanetRuntimeState(RuntimeState);
+		return;
+	}
+
+	UVoraxiaPlanetDefinition* PlanetDefinition =
+		PlanetActor->GetPlanetDefinition();
+
+	if (!IsValid(PlanetDefinition))
+	{
+		ClearPreviewMesh();
+		return;
+	}
+
+	FString ValidationFailureReason;
+
+	if (!PlanetDefinition->IsDefinitionValid(ValidationFailureReason))
+	{
+		ClearPreviewMesh();
+		return;
+	}
+
+	/**
+	 * Editor preview generation is intentionally derived from the design-time
+	 * definition rather than mutating the actor's replicated runtime state.
+	 *
+	 * At BeginPlay, the authoritative server still validates the definition and
+	 * creates the real replicated state through its normal lifecycle.
+	 */
+	RefreshFromPlanetRuntimeState(
+		PlanetDefinition->CreateRuntimeState());
+}
+
+void UVoraxiaPlanetSurfacePatchComponent::
 RefreshFromPlanetRuntimeState(
 	const FVoraxiaPlanetRuntimeState& RuntimeState)
 {
+	SanitizePreviewSettings();
+
 	if (!bGeneratePreviewMesh || !RuntimeState.IsValid())
 	{
 		ClearPreviewMesh();
@@ -275,6 +339,84 @@ ClearPreviewMesh()
 	SetMesh(MoveTemp(EmptyMesh));
 
 	bHasGeneratedPreviewMesh = false;
+}
+
+#if WITH_EDITOR
+void UVoraxiaPlanetSurfacePatchComponent::
+PostEditChangeProperty(
+	FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName PropertyName =
+		PropertyChangedEvent.GetPropertyName();
+
+	const bool bPreviewSettingChanged =
+		PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			bGeneratePreviewMesh)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewChunkFace)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewChunkLevel)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewChunkX)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewChunkY)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewPatchResolution)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewPlanetRadiusCentimetres);
+
+	if (bPreviewSettingChanged)
+	{
+		RebuildPreviewMesh();
+	}
+}
+#endif
+
+void UVoraxiaPlanetSurfacePatchComponent::
+SanitizePreviewSettings()
+{
+	/**
+	 * Persistent chunk addresses are currently defined through Level 24.
+	 * Keep this aligned with FVoraxiaPlanetChunkId validation.
+	 */
+	constexpr int32 MaximumPreviewChunkLevel = 24;
+
+	PreviewChunkLevel = FMath::Clamp(
+		PreviewChunkLevel,
+		0,
+		MaximumPreviewChunkLevel);
+
+	const int32 PatchesPerAxis =
+		FVoraxiaPlanetChunkId::GetPatchesPerAxis(
+			PreviewChunkLevel);
+
+	PreviewChunkX = FMath::Clamp(
+		PreviewChunkX,
+		0,
+		FMath::Max(0, PatchesPerAxis - 1));
+
+	PreviewChunkY = FMath::Clamp(
+		PreviewChunkY,
+		0,
+		FMath::Max(0, PatchesPerAxis - 1));
+
+	PreviewPatchResolution = FMath::Clamp(
+		PreviewPatchResolution,
+		2,
+		128);
+
+	PreviewPlanetRadiusCentimetres = FMath::Max(
+		100.0,
+		PreviewPlanetRadiusCentimetres);
 }
 
 FVoraxiaPlanetChunkId UVoraxiaPlanetSurfacePatchComponent::

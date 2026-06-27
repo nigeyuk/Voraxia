@@ -14,6 +14,7 @@
 
 #include "VoraxiaPlanetSurfacePatchComponent.generated.h"
 
+struct FPropertyChangedEvent;
 struct FVoraxiaPlanetRuntimeState;
 
 /**
@@ -61,6 +62,21 @@ public:
 		const FVoraxiaPlanetRuntimeState& RuntimeState);
 
 	/**
+	 * @brief Rebuilds the preview using live runtime state or the editor definition.
+	 *
+	 * In play, this prefers the server-authored runtime state owned by the
+	 * planet actor. In the editor, before play begins, it derives temporary
+	 * preview state from the assigned planet definition asset.
+	 *
+	 * This function does not modify replicated planet state, persistent terrain
+	 * data, or generated terrain edits.
+	 */
+	UFUNCTION(
+		CallInEditor,
+		Category = "Voraxia Planet|Terrain Preview")
+	void RebuildPreviewMesh();
+
+	/**
 	 * @brief Removes all generated preview geometry from this component.
 	 */
 	void ClearPreviewMesh();
@@ -75,6 +91,16 @@ public:
 	{
 		return bHasGeneratedPreviewMesh;
 	}
+
+#if WITH_EDITOR
+	/**
+	 * @brief Rebuilds the local editor preview when preview settings change.
+	 *
+	 * @param PropertyChangedEvent Description of the edited Details-panel property.
+	 */
+	virtual void PostEditChangeProperty(
+		FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 protected:
 	/**
@@ -169,6 +195,14 @@ private:
 	 */
 	FVoraxiaPlanetChunkId BuildPreviewChunkId(
 		const FVoraxiaPlanetRuntimeState& RuntimeState) const;
+
+	/**
+	 * @brief Clamps the editable preview address to a valid chunk coordinate range.
+	 *
+	 * This keeps Level, X, and Y coherent when users alter them from the
+	 * Details panel or a tooling workflow.
+	 */
+	void SanitizePreviewSettings();
 
 	/**
 	 * @brief Tracks whether the latest refresh generated usable mesh geometry.

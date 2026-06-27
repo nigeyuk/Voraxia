@@ -15,6 +15,10 @@
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 
+#if WITH_EDITOR
+#include "UObject/UnrealType.h"
+#endif
+
 DEFINE_LOG_CATEGORY_STATIC(LogVoraxiaPlanet, Log, All);
 
 namespace
@@ -116,6 +120,32 @@ AVoraxiaPlanetActor::AVoraxiaPlanetActor()
 	SetReplicateMovement(false);
 }
 
+void AVoraxiaPlanetActor::RebuildTerrainPreview()
+{
+	if (IsValid(PlanetSurfacePatchPreviewComponent))
+	{
+		PlanetSurfacePatchPreviewComponent->RebuildPreviewMesh();
+	}
+}
+
+#if WITH_EDITOR
+void AVoraxiaPlanetActor::PostEditChangeProperty(
+	FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName PropertyName =
+		PropertyChangedEvent.GetPropertyName();
+
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(
+		AVoraxiaPlanetActor,
+		PlanetDefinition))
+	{
+		RebuildTerrainPreview();
+	}
+}
+#endif
+
 void AVoraxiaPlanetActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -148,11 +178,7 @@ void AVoraxiaPlanetActor::BeginPlay()
 		 * Refresh the local preview here as well as in OnRep so clients cannot
 		 * miss the mesh build when replication arrives unusually early.
 		 */
-		if (IsValid(PlanetSurfacePatchPreviewComponent))
-		{
-			PlanetSurfacePatchPreviewComponent->RefreshFromPlanetRuntimeState(
-				PlanetRuntimeState);
-		}
+		RebuildTerrainPreview();
 
 		LogPlanetRuntimeState(TEXT("Client BeginPlay"));
 	}
@@ -185,11 +211,7 @@ void AVoraxiaPlanetActor::OnRep_PlanetRuntimeState()
 	 *
 	 * No vertices or triangles are replicated here.
 	 */
-	if (IsValid(PlanetSurfacePatchPreviewComponent))
-	{
-		PlanetSurfacePatchPreviewComponent->RefreshFromPlanetRuntimeState(
-			PlanetRuntimeState);
-	}
+	RebuildTerrainPreview();
 
 	LogPlanetRuntimeState(TEXT("Client OnRep"));
 }
@@ -239,11 +261,7 @@ bool AVoraxiaPlanetActor::InitialisePlanetRuntimeStateFromDefinition()
 	 * The server also creates its own local preview from the same authoritative
 	 * runtime state it will replicate to connected clients.
 	 */
-	if (IsValid(PlanetSurfacePatchPreviewComponent))
-	{
-		PlanetSurfacePatchPreviewComponent->RefreshFromPlanetRuntimeState(
-			PlanetRuntimeState);
-	}
+	RebuildTerrainPreview();
 
 	LogPlanetRuntimeState(TEXT("Server Initialised"));
 

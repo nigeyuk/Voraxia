@@ -17,6 +17,7 @@
 class USceneComponent;
 class UVoraxiaPlanetDebugComponent;
 class UVoraxiaPlanetSurfacePatchComponent;
+struct FPropertyChangedEvent;
 
 /**
  * @brief Runtime, multiplayer-aware representation of a Voraxia planet.
@@ -107,7 +108,30 @@ public:
 		return PlanetRuntimeState.IsValid();
 	}
 
+	/**
+	 * @brief Rebuilds the local terrain patch preview from runtime or definition data.
+	 *
+	 * In the editor this provides a manual Details-panel control. During play,
+	 * the same function rebuilds from the server-authored replicated runtime state.
+	 *
+	 * This never changes replicated planet state or persistent terrain data.
+	 */
+	UFUNCTION(
+		CallInEditor,
+		Category = "Voraxia Planet|Terrain Preview")
+	void RebuildTerrainPreview();
+
 protected:
+#if WITH_EDITOR
+	/**
+	 * @brief Refreshes the local preview when the assigned definition changes.
+	 *
+	 * @param PropertyChangedEvent Description of the edited Details-panel property.
+	 */
+	virtual void PostEditChangeProperty(
+		FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 	/**
 	 * @brief Root scene component for future terrain, atmosphere, and streaming systems.
 	 */
