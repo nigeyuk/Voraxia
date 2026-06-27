@@ -12,19 +12,6 @@ A multiplayer-first runtime plugin foundation for Voraxia's planetary terrain.
 Keeping the first milestone tiny makes a broken plugin boundary easy to diagnose before
 we introduce cube-sphere mathematics, streamed terrain, or networking.
 
-## Install
-
-1. Close Unreal Editor and Rider.
-2. Copy this entire `VoraxiaPlanet` folder into:
-   `YourVoraxiaProject/Plugins/VoraxiaPlanet`
-3. Regenerate project files from the `.uproject` file, then open the solution/project in Rider.
-4. Build the `VoraxiaEditor` target.
-5. Open Voraxia. Unreal should discover the plugin. If it is not enabled automatically,
-   enable **Voraxia Planet** under **Edit > Plugins > Voraxia**, then restart when prompted.
-
-For source-control stability, commit the plugin source and descriptor, but never commit its
-`Binaries/` or `Intermediate/` directories.
-
 ## Intentional directory map
 
 ```text
