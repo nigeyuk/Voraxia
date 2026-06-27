@@ -2,16 +2,22 @@
 
 /**
  * @file VoraxiaPlanetSurfacePatchComponent.cpp
- * @brief Implementation of the local cube-sphere terrain patch-grid preview component.
+ * @brief Implementation of the local cube-sphere terrain region and whole-planet preview component.
  */
 
 #include "Terrain/VoraxiaPlanetSurfacePatchComponent.h"
+
+#include "Components/BaseDynamicMeshSceneProxy.h"
 
 #include "Planet/VoraxiaPlanetActor.h"
 #include "Planet/VoraxiaPlanetDefinition.h"
 #include "Planet/VoraxiaPlanetMath.h"
 
 #include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMesh/DynamicMeshAttributeSet.h"
+#include "DynamicMesh/DynamicMeshOverlay.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/SoftObjectPtr.h"
 
 #if WITH_EDITOR
 #include "UObject/UnrealType.h"
@@ -19,6 +25,81 @@
 
 namespace
 {
+	/**
+	 * @brief Returns a stable saturated diagnostic colour from a persistent chunk address.
+	 *
+	 * @param ChunkId Chunk whose address should determine the preview colour.
+	 * @param Intensity Brightness multiplier applied to the selected debug colour.
+	 *
+	 * @return Linear colour used for every vertex of that preview patch.
+	 */
+	FLinearColor GetChunkDebugColour(
+		const FVoraxiaPlanetChunkId& ChunkId,
+		const float Intensity)
+	{
+		/**
+		 * This is deliberately a hand-picked, high-saturation engineering palette.
+		 *
+		 * The preview exists to make chunk boundaries and address changes obvious,
+		 * not to resemble final terrain or a softened colour gradient. The fixed
+		 * palette also avoids nearby chunks converging on almost-identical pastels.
+		 */
+		static const FLinearColor DiagnosticPalette[] =
+		{
+			FLinearColor(1.00f, 0.05f, 0.05f), // Signal red
+			FLinearColor(1.00f, 0.28f, 0.00f), // Ember orange
+			FLinearColor(1.00f, 0.85f, 0.00f), // Signal yellow
+			FLinearColor(0.38f, 1.00f, 0.00f), // Acid green
+			FLinearColor(0.00f, 0.85f, 0.22f), // Emerald
+			FLinearColor(0.00f, 0.82f, 0.90f), // Electric cyan
+			FLinearColor(0.00f, 0.30f, 1.00f), // Cobalt blue
+			FLinearColor(0.34f, 0.06f, 1.00f), // Violet
+			FLinearColor(0.82f, 0.00f, 1.00f), // Magenta
+			FLinearColor(1.00f, 0.00f, 0.52f), // Hot pink
+			FLinearColor(0.78f, 0.18f, 0.02f), // Rust
+			FLinearColor(0.00f, 0.58f, 0.50f)  // Deep teal
+		};
+
+		/**
+		 * These prime multipliers create a stable distinction between nearby
+		 * coordinates without introducing random state. This is debug presentation
+		 * only, not part of the planet generator or persistence contract.
+		 */
+		const uint32 AddressSeed =
+			(static_cast<uint32>(ChunkId.Face) * 29u)
+			+ (static_cast<uint32>(ChunkId.Level) * 47u)
+			+ (static_cast<uint32>(ChunkId.X) * 71u)
+			+ (static_cast<uint32>(ChunkId.Y) * 113u);
+
+		const FLinearColor BaseColour =
+			DiagnosticPalette[
+				AddressSeed % UE_ARRAY_COUNT(DiagnosticPalette)];
+
+		/**
+		 * Scaling brightness keeps the palette saturated at every setting. Unlike
+		 * blending towards white, lowering intensity does not recreate the pastel
+		 * look this diagnostic mode is intended to avoid.
+		 */
+		return BaseColour * FMath::Clamp(Intensity, 0.10f, 2.00f);
+	}
+
+	/**
+	 * @brief Attempts to load Unreal's vertex-colour debug material.
+	 *
+	 * The preview remains functional if the material is unavailable. In that
+	 * case the Dynamic Mesh component falls back to its normal default rendering.
+	 *
+	 * @return Vertex-colour material when available, otherwise null.
+	 */
+	UMaterialInterface* GetVertexColourDebugMaterial()
+	{
+		static TSoftObjectPtr<UMaterialInterface> VertexColourMaterial(
+			FSoftObjectPath(
+				TEXT("/Engine/EngineDebugMaterials/VertexColorMaterial.VertexColorMaterial")));
+
+		return VertexColourMaterial.LoadSynchronous();
+	}
+
 	/**
 	 * @brief Builds one smooth cube-sphere patch from a stable chunk identity.
 	 *
@@ -30,6 +111,8 @@ namespace
 	 * @param RuntimeState Valid replicated planet state.
 	 * @param PatchResolution Number of generated quads along each patch edge.
 	 * @param PreviewPlanetRadiusCentimetres Local compressed preview radius.
+	 * @param bUseDebugVertexColours Whether vertices should receive the supplied colour.
+	 * @param DebugColour Stable preview colour for this chunk.
 	 * @param OutMesh Receives generated Dynamic Mesh geometry.
 	 *
 	 * @return True when a valid patch mesh was generated.
@@ -39,6 +122,8 @@ namespace
 		const FVoraxiaPlanetRuntimeState& RuntimeState,
 		const int32 PatchResolution,
 		const double PreviewPlanetRadiusCentimetres,
+		const bool bUseDebugVertexColours,
+		const FLinearColor& DebugColour,
 		FDynamicMesh3& OutMesh)
 	{
 		if (!ChunkId.IsValid() || !RuntimeState.IsValid())
@@ -94,6 +179,32 @@ namespace
 		VertexIds.SetNumUninitialized(
 			VerticesPerAxis * VerticesPerAxis);
 
+		TArray<int32> ColourElementIds;
+		FDynamicMeshColorOverlay* ColourOverlay = nullptr;
+
+		if (bUseDebugVertexColours)
+		{
+			if (!OutMesh.HasAttributes())
+			{
+				OutMesh.EnableAttributes();
+			}
+
+			if (!OutMesh.Attributes()->HasPrimaryColors())
+			{
+				OutMesh.Attributes()->EnablePrimaryColors();
+			}
+
+			ColourOverlay = OutMesh.Attributes()->PrimaryColors();
+
+			if (ColourOverlay == nullptr)
+			{
+				return false;
+			}
+
+			ColourElementIds.SetNumUninitialized(
+				VerticesPerAxis * VerticesPerAxis);
+		}
+
 		/**
 		 * This is deliberately a preview conversion:
 		 *
@@ -104,6 +215,12 @@ namespace
 		 */
 		const double PreviewCentimetresPerPlanetMetre =
 			SafePreviewRadiusCentimetres / PlanetRadiusMetres;
+
+		const FVector4f VertexColour(
+			DebugColour.R,
+			DebugColour.G,
+			DebugColour.B,
+			1.0f);
 
 		for (int32 VIndex = 0; VIndex < VerticesPerAxis; ++VIndex)
 		{
@@ -162,6 +279,12 @@ namespace
 				VertexIds[VertexArrayIndex] =
 					OutMesh.AppendVertex(
 						PreviewPositionCentimetres);
+
+				if (ColourOverlay != nullptr)
+				{
+					ColourElementIds[VertexArrayIndex] =
+						ColourOverlay->AppendElement(VertexColour);
+				}
 			}
 		}
 
@@ -196,19 +319,136 @@ namespace
 				 * This preview must contain exactly two triangles per quad. Adding both
 				 * winding directions creates overlapping geometry and z-fighting.
 				 */
-				OutMesh.AppendTriangle(
-					VertexIds[Vertex11],
-					VertexIds[Vertex10],
-					VertexIds[Vertex00]);
+				const int32 FirstTriangleId =
+					OutMesh.AppendTriangle(
+						VertexIds[Vertex11],
+						VertexIds[Vertex10],
+						VertexIds[Vertex00]);
 
-				OutMesh.AppendTriangle(
-					VertexIds[Vertex01],
-					VertexIds[Vertex11],
-					VertexIds[Vertex00]);
+				const int32 SecondTriangleId =
+					OutMesh.AppendTriangle(
+						VertexIds[Vertex01],
+						VertexIds[Vertex11],
+						VertexIds[Vertex00]);
+
+				if (ColourOverlay != nullptr)
+				{
+					if (FirstTriangleId >= 0)
+					{
+						ColourOverlay->SetTriangle(
+							FirstTriangleId,
+							UE::Geometry::FIndex3i(
+								ColourElementIds[Vertex11],
+								ColourElementIds[Vertex10],
+								ColourElementIds[Vertex00]));
+					}
+
+					if (SecondTriangleId >= 0)
+					{
+						ColourOverlay->SetTriangle(
+							SecondTriangleId,
+							UE::Geometry::FIndex3i(
+								ColourElementIds[Vertex01],
+								ColourElementIds[Vertex11],
+								ColourElementIds[Vertex00]));
+					}
+				}
 			}
 		}
 
 		return OutMesh.TriangleCount() > 0;
+	}
+
+	/**
+	 * @brief Builds a merged diagnostic mesh containing every patch on all six cube faces.
+	 *
+	 * Each patch remains independently generated from its persistent cube-face
+	 * address. The resulting geometry is merged only for convenient editor
+	 * inspection, not as a model for final streamed terrain ownership.
+	 *
+	 * @param RuntimeState Valid replicated or editor-derived planet state.
+	 * @param WholePlanetPreviewLevel Quadtree level to generate across every face.
+	 * @param PatchResolution Number of generated quads along every patch edge.
+	 * @param PreviewPlanetRadiusCentimetres Local compressed preview radius.
+	 * @param bUseDebugVertexColours Whether patches should receive stable debug colours.
+	 * @param DebugColourIntensity Brightness multiplier applied to the diagnostic palette.
+	 * @param OutMesh Receives the merged planet preview mesh.
+	 *
+	 * @return True when at least one valid patch was generated.
+	 */
+	bool BuildWholePlanetPreviewMesh(
+		const FVoraxiaPlanetRuntimeState& RuntimeState,
+		const int32 WholePlanetPreviewLevel,
+		const int32 PatchResolution,
+		const double PreviewPlanetRadiusCentimetres,
+		const bool bUseDebugVertexColours,
+		const float DebugColourIntensity,
+		FDynamicMesh3& OutMesh)
+	{
+		if (!RuntimeState.IsValid())
+		{
+			return false;
+		}
+
+		const int32 PatchesPerAxis =
+			FVoraxiaPlanetChunkId::GetPatchesPerAxis(
+				WholePlanetPreviewLevel);
+
+		if (PatchesPerAxis <= 0)
+		{
+			return false;
+		}
+
+		/**
+		 * Keep face iteration explicit. Persistent and network-visible cube-face
+		 * identity must never depend on enum arithmetic or incidental ordering.
+		 */
+		static const EVoraxiaCubeFace Faces[] =
+		{
+			EVoraxiaCubeFace::PositiveX,
+			EVoraxiaCubeFace::NegativeX,
+			EVoraxiaCubeFace::PositiveY,
+			EVoraxiaCubeFace::NegativeY,
+			EVoraxiaCubeFace::PositiveZ,
+			EVoraxiaCubeFace::NegativeZ
+		};
+
+		bool bGeneratedAnyPatch = false;
+
+		for (const EVoraxiaCubeFace Face : Faces)
+		{
+			for (int32 ChunkY = 0; ChunkY < PatchesPerAxis; ++ChunkY)
+			{
+				for (int32 ChunkX = 0; ChunkX < PatchesPerAxis; ++ChunkX)
+				{
+					FVoraxiaPlanetChunkId ChunkId;
+
+					ChunkId.PlanetId = RuntimeState.PlanetId;
+					ChunkId.Face = Face;
+					ChunkId.Level = WholePlanetPreviewLevel;
+					ChunkId.X = ChunkX;
+					ChunkId.Y = ChunkY;
+
+					if (!BuildReferenceSpherePatchMesh(
+						ChunkId,
+						RuntimeState,
+						PatchResolution,
+						PreviewPlanetRadiusCentimetres,
+						bUseDebugVertexColours,
+						GetChunkDebugColour(
+							ChunkId,
+							DebugColourIntensity),
+						OutMesh))
+					{
+						return false;
+					}
+
+					bGeneratedAnyPatch = true;
+				}
+			}
+		}
+
+		return bGeneratedAnyPatch;
 	}
 }
 
@@ -304,40 +544,62 @@ RefreshFromPlanetRuntimeState(
 		return;
 	}
 
-	const FVoraxiaPlanetChunkId BaseChunkId =
-		BuildPreviewChunkId(RuntimeState);
-
 	FDynamicMesh3 GeneratedMesh;
 	bool bGeneratedAnyPatch = false;
 
-	/**
-	 * The preview deliberately merges adjacent chunks into one Dynamic Mesh.
-	 *
-	 * This is a visual validation tool, not the final streaming representation.
-	 * Production terrain will retain independently streamed, culled, collision-
-	 * bearing chunk components. Building the region in one mesh here keeps the
-	 * Details-panel preview lightweight while exposing seams between addresses.
-	 */
-	for (int32 OffsetY = 0; OffsetY < PreviewChunkSpanY; ++OffsetY)
+	if (bPreviewEntirePlanet)
 	{
-		for (int32 OffsetX = 0; OffsetX < PreviewChunkSpanX; ++OffsetX)
+		/**
+		 * Whole-planet mode deliberately traverses every cube face and every patch
+		 * at the selected diagnostic level. The merged Dynamic Mesh is for visual
+		 * validation only. Production terrain will still stream, cull, collide, and
+		 * persist independently managed chunks.
+		 */
+		bGeneratedAnyPatch = BuildWholePlanetPreviewMesh(
+			RuntimeState,
+			WholePlanetPreviewLevel,
+			PreviewPatchResolution,
+			PreviewPlanetRadiusCentimetres,
+			bUseChunkDebugColours,
+			DebugColourIntensity,
+			GeneratedMesh);
+	}
+	else
+	{
+		const FVoraxiaPlanetChunkId BaseChunkId =
+			BuildPreviewChunkId(RuntimeState);
+
+		/**
+		 * Single-face mode deliberately merges adjacent chunks into one Dynamic
+		 * Mesh. This is a visual validation tool, not the final streaming
+		 * representation. Building the region in one mesh keeps the Details-panel
+		 * preview lightweight while exposing seams between chunk addresses.
+		 */
+		for (int32 OffsetY = 0; OffsetY < PreviewChunkSpanY; ++OffsetY)
 		{
-			FVoraxiaPlanetChunkId ChunkId = BaseChunkId;
-			ChunkId.X += OffsetX;
-			ChunkId.Y += OffsetY;
-
-			if (!BuildReferenceSpherePatchMesh(
-				ChunkId,
-				RuntimeState,
-				PreviewPatchResolution,
-				PreviewPlanetRadiusCentimetres,
-				GeneratedMesh))
+			for (int32 OffsetX = 0; OffsetX < PreviewChunkSpanX; ++OffsetX)
 			{
-				ClearPreviewMesh();
-				return;
-			}
+				FVoraxiaPlanetChunkId ChunkId = BaseChunkId;
+				ChunkId.X += OffsetX;
+				ChunkId.Y += OffsetY;
 
-			bGeneratedAnyPatch = true;
+				if (!BuildReferenceSpherePatchMesh(
+					ChunkId,
+					RuntimeState,
+					PreviewPatchResolution,
+					PreviewPlanetRadiusCentimetres,
+					bUseChunkDebugColours,
+					GetChunkDebugColour(
+						ChunkId,
+						DebugColourIntensity),
+					GeneratedMesh))
+				{
+					ClearPreviewMesh();
+					return;
+				}
+
+				bGeneratedAnyPatch = true;
+			}
 		}
 	}
 
@@ -346,6 +608,8 @@ RefreshFromPlanetRuntimeState(
 		ClearPreviewMesh();
 		return;
 	}
+
+	UpdatePreviewDebugMaterial();
 
 	/**
 	 * SetMesh replaces the component's local renderable Dynamic Mesh.
@@ -384,6 +648,18 @@ PostEditChangeProperty(
 			bGeneratePreviewMesh)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
+			bUseChunkDebugColours)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			DebugColourIntensity)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			bPreviewEntirePlanet)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			WholePlanetPreviewLevel)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
 			PreviewChunkFace)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
@@ -415,6 +691,24 @@ PostEditChangeProperty(
 #endif
 
 void UVoraxiaPlanetSurfacePatchComponent::
+UpdatePreviewDebugMaterial()
+{
+	if (!bUseChunkDebugColours)
+	{
+		SetMaterial(0, nullptr);
+		return;
+	}
+
+	/**
+	 * This is an engine-supplied editor/debug material that exposes the primary
+	 * vertex-colour overlay. It is not a final Voraxia surface material.
+	 */
+	SetMaterial(
+		0,
+		GetVertexColourDebugMaterial());
+}
+
+void UVoraxiaPlanetSurfacePatchComponent::
 SanitizePreviewSettings()
 {
 	/**
@@ -427,6 +721,23 @@ SanitizePreviewSettings()
 		PreviewChunkLevel,
 		0,
 		MaximumPreviewChunkLevel);
+
+	DebugColourIntensity = FMath::Clamp(
+		DebugColourIntensity,
+		0.10f,
+		2.00f);
+
+	/**
+	 * Whole-planet mode is intentionally capped at Level 3. At the default
+	 * 32-quads-per-patch preview resolution, higher levels would create enough
+	 * geometry to make an editor diagnostic accidentally expensive.
+	 */
+	constexpr int32 MaximumWholePlanetPreviewLevel = 3;
+
+	WholePlanetPreviewLevel = FMath::Clamp(
+		WholePlanetPreviewLevel,
+		0,
+		MaximumWholePlanetPreviewLevel);
 
 	const int32 PatchesPerAxis =
 		FVoraxiaPlanetChunkId::GetPatchesPerAxis(

@@ -26,15 +26,16 @@ struct FVoraxiaPlanetRuntimeState;
  * - It independently reconstructs the same patch-grid geometry on server and clients.
  * - It does not replicate generated vertices, triangles, collision, or mesh buffers.
  * - It currently generates only a smooth reference-sphere shell with no terrain noise.
+ * - It can assign deterministic per-patch vertex colours for visual diagnostics.
+ * - It can generate either one adjacent patch region or all six cube faces.
  * - It deliberately scales the real planet down into a local preview radius.
  *
  * @warning This is not the final streaming terrain component.
  *
  * The purpose of this first mesh is to validate that a real
  * FVoraxiaPlanetChunkId, and its selected adjacent region, produce the expected
- * cube-sphere patch geometry before
- * we add LOD, deterministic height generation, collision, edits, or replication
- * of terrain operations.
+ * cube-sphere patch geometry before we add LOD, deterministic height generation,
+ * collision, edits, or replication of terrain operations.
  */
 UCLASS(
 	ClassGroup = (Voraxia),
@@ -115,6 +116,71 @@ protected:
 		BlueprintReadOnly,
 		Category = "Voraxia Planet|Terrain Preview")
 	bool bGeneratePreviewMesh = true;
+
+	/**
+	 * @brief Enables deterministic per-chunk vertex colours for the preview mesh.
+	 *
+	 * Colours are derived solely from the preview chunk address. They exist only
+	 * to make chunk boundaries, region selection, and later LOD experiments easy
+	 * to inspect. They are not biome data, terrain material data, or persistent
+	 * gameplay state.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Debug")
+	bool bUseChunkDebugColours = true;
+
+	/**
+	 * @brief Brightness multiplier applied to the saturated debug-colour palette.
+	 *
+	 * This scales the selected diagnostic colour without blending it towards
+	 * white, so lower values remain rich and readable rather than becoming pastel.
+	 * It affects only local preview rendering.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Debug",
+		meta = (
+			ClampMin = "0.10",
+			ClampMax = "2.00",
+			UIMin = "0.10",
+			UIMax = "1.25"))
+	float DebugColourIntensity = 1.00f;
+
+	/**
+	 * @brief Generates a diagnostic preview containing every cube face of the planet.
+	 *
+	 * When enabled, the component ignores the single-face address and span
+	 * settings below, then generates every patch on all six cube faces at
+	 * WholePlanetPreviewLevel. This is an editor and diagnostic preview only.
+	 * It does not change streaming, networking, terrain persistence, or gameplay
+	 * terrain representation.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Whole Planet")
+	bool bPreviewEntirePlanet = false;
+
+	/**
+	 * @brief Quadtree level used when generating the entire diagnostic planet.
+	 *
+	 * Level 0 produces six patches, one per cube face. Level 1 produces
+	 * twenty-four patches. Level 2 produces ninety-six patches. Level 3 produces
+	 * three hundred and eighty-four patches and is deliberately the maximum for
+	 * this merged editor preview.
+	 *
+	 * @warning This guard prevents a diagnostic setting from accidentally creating
+	 * millions of preview triangles. It is not a production terrain LOD limit.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Whole Planet",
+		meta = (ClampMin = "0", ClampMax = "3", EditCondition = "bPreviewEntirePlanet"))
+	int32 WholePlanetPreviewLevel = 1;
 
 	/**
 	 * @brief Cube face used by the patch preview.
@@ -224,6 +290,14 @@ private:
 	 */
 	FVoraxiaPlanetChunkId BuildPreviewChunkId(
 		const FVoraxiaPlanetRuntimeState& RuntimeState) const;
+
+	/**
+	 * @brief Applies the vertex-colour debug material or clears the override.
+	 *
+	 * The supplied engine material exists solely for preview diagnostics. Final
+	 * terrain rendering will use Voraxia-authored terrain materials instead.
+	 */
+	void UpdatePreviewDebugMaterial();
 
 	/**
 	 * @brief Clamps the editable preview address to a valid chunk coordinate range.
