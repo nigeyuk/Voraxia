@@ -18,6 +18,26 @@ struct FPropertyChangedEvent;
 struct FVoraxiaPlanetRuntimeState;
 
 /**
+ * @brief Selects the local vertex-colour diagnostic used by the terrain preview.
+ *
+ * All modes are presentation-only. They derive their values from deterministic
+ * planet data but never alter terrain generation, replicated state, persistence,
+ * collision, or gameplay materials.
+ */
+UENUM(BlueprintType)
+enum class EVoraxiaPlanetPreviewDebugColourMode : uint8
+{
+	/** @brief Assigns a stable saturated colour from the persistent chunk address. */
+	ChunkAddress UMETA(DisplayName = "Chunk Address"),
+
+	/** @brief Colours terrain by sampled elevation relative to the reference sphere. */
+	TerrainHeight UMETA(DisplayName = "Terrain Height"),
+
+	/** @brief Colours terrain by estimated macro-terrain steepness. */
+	TerrainSlope UMETA(DisplayName = "Terrain Slope")
+};
+
+/**
  * @brief Builds a deterministic cube-sphere terrain-patch grid as one local Dynamic Mesh preview.
  *
  * This component is intentionally a visual prototype:
@@ -26,7 +46,7 @@ struct FVoraxiaPlanetRuntimeState;
  * - It independently reconstructs the same patch-grid geometry on server and clients.
  * - It does not replicate generated vertices, triangles, collision, or mesh buffers.
  * - It can optionally apply deterministic macro-terrain height from the planet generator.
- * - It can assign deterministic per-patch vertex colours for visual diagnostics.
+ * - It can colour vertices by chunk address, sampled terrain height, or macro slope.
  * - It can generate either one adjacent patch region or all six cube faces.
  * - It deliberately scales the real planet down into a local preview radius.
  *
@@ -154,25 +174,42 @@ protected:
 	double VisualTerrainHeightExaggeration = 40.0;
 
 	/**
-	 * @brief Enables deterministic per-chunk vertex colours for the preview mesh.
+	 * @brief Enables local vertex-colour diagnostic shading for the preview mesh.
 	 *
-	 * Colours are derived solely from the preview chunk address. They exist only
-	 * to make chunk boundaries, region selection, and later LOD experiments easy
-	 * to inspect. They are not biome data, terrain material data, or persistent
-	 * gameplay state.
+	 * The selected colour mode can visualise persistent chunk addresses, sampled
+	 * terrain elevation, or estimated terrain steepness. It is an editor and
+	 * preview aid only, never biome data, gameplay material data, or persistent
+	 * world state.
 	 */
 	UPROPERTY(
 		EditAnywhere,
 		BlueprintReadOnly,
-		Category = "Voraxia Planet|Terrain Preview|Debug")
+		Category = "Voraxia Planet|Terrain Preview|Debug",
+		meta = (DisplayName = "Use Debug Colours"))
 	bool bUseChunkDebugColours = true;
+	
+	/**
+	 * @brief Selects the deterministic diagnostic used for preview vertex colours.
+	 *
+	 * Chunk Address keeps patch boundaries immediately visible. Terrain Height
+	 * reveals basins, lowlands, highlands, and summits. Terrain Slope estimates
+	 * macro steepness from the same seed-driven height field using local tangent
+	 * probes, which is more expensive and is best inspected at whole-planet
+	 * preview Levels 1 and 2.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Debug",
+		meta = (EditCondition = "bUseChunkDebugColours"))
+	EVoraxiaPlanetPreviewDebugColourMode DebugColourMode =
+		EVoraxiaPlanetPreviewDebugColourMode::ChunkAddress;
 
 	/**
-	 * @brief Brightness multiplier applied to the saturated debug-colour palette.
+	 * @brief Brightness multiplier applied to the selected debug-colour mode.
 	 *
-	 * This scales the selected diagnostic colour without blending it towards
-	 * white, so lower values remain rich and readable rather than becoming pastel.
-	 * It affects only local preview rendering.
+	 * This scales the chosen diagnostic colours without changing sampled terrain
+	 * values. It affects only local preview rendering.
 	 */
 	UPROPERTY(
 		EditAnywhere,
@@ -328,7 +365,7 @@ private:
 		const FVoraxiaPlanetRuntimeState& RuntimeState) const;
 
 	/**
-	 * @brief Applies the vertex-colour debug material or clears the override.
+	 * @brief Applies the vertex-colour diagnostic material or clears the override.
 	 *
 	 * The supplied engine material exists solely for preview diagnostics. Final
 	 * terrain rendering will use Voraxia-authored terrain materials instead.

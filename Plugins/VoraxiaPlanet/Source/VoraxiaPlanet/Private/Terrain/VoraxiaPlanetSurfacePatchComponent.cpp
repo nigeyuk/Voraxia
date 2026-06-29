@@ -20,6 +20,8 @@
 #include "Materials/MaterialInterface.h"
 #include "UObject/SoftObjectPtr.h"
 
+#include <cmath>
+
 #if WITH_EDITOR
 #include "UObject/UnrealType.h"
 #endif
@@ -84,6 +86,313 @@ namespace
 		return BaseColour * FMath::Clamp(Intensity, 0.10f, 2.00f);
 	}
 
+
+	/**
+	 * @brief Applies the shared preview intensity control to a diagnostic colour.
+	 *
+	 * @param BaseColour Unscaled diagnostic colour.
+	 * @param Intensity Local preview brightness multiplier.
+	 *
+	 * @return Scaled vertex colour.
+	 */
+	FLinearColor ApplyDebugColourIntensity(
+		const FLinearColor& BaseColour,
+		const float Intensity)
+	{
+		return BaseColour * FMath::Clamp(Intensity, 0.10f, 2.00f);
+	}
+
+	/**
+	 * @brief Returns a terrain-elevation diagnostic colour for one sampled height.
+	 *
+	 * @param RuntimeState Planet terrain limits used to normalise the height.
+	 * @param HeightMetres Sampled height relative to the reference sphere.
+	 * @param Intensity Local preview brightness multiplier.
+	 *
+	 * @return Stable height-band colour from deep basin to summit.
+	 */
+	FLinearColor GetTerrainHeightDebugColour(
+		const FVoraxiaPlanetRuntimeState& RuntimeState,
+		const double HeightMetres,
+		const float Intensity)
+	{
+		const FLinearColor DeepBasinColour(0.01f, 0.02f, 0.12f);
+		const FLinearColor BasinColour(0.00f, 0.20f, 0.68f);
+		const FLinearColor LowlandColour(0.02f, 0.52f, 0.14f);
+		const FLinearColor HighlandColour(0.76f, 0.40f, 0.02f);
+		const FLinearColor SummitColour(0.94f, 0.94f, 0.88f);
+
+		FLinearColor BaseColour = LowlandColour;
+
+		if (HeightMetres < 0.0)
+		{
+			const double SafeMaximumDepthMetres =
+				FMath::Max(1.0, RuntimeState.MaximumTerrainDepthMetres);
+
+			const float DepthAlpha =
+				static_cast<float>(FMath::Clamp(
+					(-HeightMetres) / SafeMaximumDepthMetres,
+					0.0,
+					1.0));
+
+			BaseColour = FMath::Lerp(
+				BasinColour,
+				DeepBasinColour,
+				DepthAlpha);
+		}
+		else
+		{
+			const double SafeMaximumHeightMetres =
+				FMath::Max(1.0, RuntimeState.MaximumTerrainHeightMetres);
+
+			const float HeightAlpha =
+				static_cast<float>(FMath::Clamp(
+					HeightMetres / SafeMaximumHeightMetres,
+					0.0,
+					1.0));
+
+			if (HeightAlpha <= 0.50f)
+			{
+				BaseColour = FMath::Lerp(
+					LowlandColour,
+					HighlandColour,
+					HeightAlpha * 2.0f);
+			}
+			else
+			{
+				BaseColour = FMath::Lerp(
+					HighlandColour,
+					SummitColour,
+					(HeightAlpha - 0.50f) * 2.0f);
+			}
+		}
+
+		return ApplyDebugColourIntensity(BaseColour, Intensity);
+	}
+
+	/**
+	 * @brief Estimates normalised macro-terrain slope at one global planet direction.
+	 *
+	 * This is deliberately a visual diagnostic, not an authoritative gameplay slope
+	 * query. Four deterministic height samples are taken in a stable tangent frame
+	 * around the supplied direction. The input field is global-direction based, so
+	 * the estimate does not depend on cube-face identity.
+	 *
+	 * @param RuntimeState Valid replicated or editor-derived planet state.
+	 * @param UnitDirection Normalised direction from the planet centre.
+	 * @param OutSlopeNormalised Receives a 0 to 1 diagnostic steepness value.
+	 *
+	 * @return True when the slope estimate was produced.
+	 */
+	bool TrySampleMacroTerrainSlopeNormalised(
+		const FVoraxiaPlanetRuntimeState& RuntimeState,
+		const FVector3d& UnitDirection,
+		double& OutSlopeNormalised)
+	{
+		OutSlopeNormalised = 0.0;
+
+		if (!RuntimeState.IsValid()
+			|| UnitDirection.SizeSquared() <= 0.000000000001)
+		{
+			return false;
+		}
+
+		constexpr double SlopeSampleDistanceMetres = 1000.0;
+		constexpr double MaximumVisualSlopeDegrees = 55.0;
+		constexpr double DegreesPerRadian = 57.29577951308232;
+
+		const FVector3d SafeUnitDirection =
+			UnitDirection.GetSafeNormal();
+
+		const FVector3d PrimaryReferenceAxis(0.0, 0.0, 1.0);
+		const FVector3d SecondaryReferenceAxis(0.0, 1.0, 0.0);
+
+		const FVector3d ReferenceAxis =
+			FMath::Abs(FVector3d::DotProduct(
+				SafeUnitDirection,
+				PrimaryReferenceAxis)) < 0.95
+				? PrimaryReferenceAxis
+				: SecondaryReferenceAxis;
+
+		const FVector3d TangentU =
+			FVector3d::CrossProduct(
+				ReferenceAxis,
+				SafeUnitDirection).GetSafeNormal();
+
+		const FVector3d TangentV =
+			FVector3d::CrossProduct(
+				SafeUnitDirection,
+				TangentU).GetSafeNormal();
+
+		if (TangentU.SizeSquared() <= 0.000000000001
+			|| TangentV.SizeSquared() <= 0.000000000001)
+		{
+			return false;
+		}
+
+		const double AngularSampleOffset =
+			FMath::Clamp(
+				SlopeSampleDistanceMetres / RuntimeState.RadiusMetres,
+				0.000001,
+				0.05);
+
+		const FVector3d UPositiveDirection =
+			(SafeUnitDirection + (TangentU * AngularSampleOffset)).GetSafeNormal();
+
+		const FVector3d UNegativeDirection =
+			(SafeUnitDirection - (TangentU * AngularSampleOffset)).GetSafeNormal();
+
+		const FVector3d VPositiveDirection =
+			(SafeUnitDirection + (TangentV * AngularSampleOffset)).GetSafeNormal();
+
+		const FVector3d VNegativeDirection =
+			(SafeUnitDirection - (TangentV * AngularSampleOffset)).GetSafeNormal();
+
+		double UPositiveHeightMetres = 0.0;
+		double UNegativeHeightMetres = 0.0;
+		double VPositiveHeightMetres = 0.0;
+		double VNegativeHeightMetres = 0.0;
+
+		if (!VoraxiaPlanetTerrain::SampleMacroTerrainHeightMetres(
+			RuntimeState,
+			UPositiveDirection,
+			UPositiveHeightMetres)
+			|| !VoraxiaPlanetTerrain::SampleMacroTerrainHeightMetres(
+				RuntimeState,
+				UNegativeDirection,
+				UNegativeHeightMetres)
+			|| !VoraxiaPlanetTerrain::SampleMacroTerrainHeightMetres(
+				RuntimeState,
+				VPositiveDirection,
+				VPositiveHeightMetres)
+			|| !VoraxiaPlanetTerrain::SampleMacroTerrainHeightMetres(
+				RuntimeState,
+				VNegativeDirection,
+				VNegativeHeightMetres))
+		{
+			return false;
+		}
+
+		const double TangentSampleDistanceMetres =
+			RuntimeState.RadiusMetres * AngularSampleOffset;
+
+		const double GradientU =
+			(UPositiveHeightMetres - UNegativeHeightMetres)
+			/ (TangentSampleDistanceMetres * 2.0);
+
+		const double GradientV =
+			(VPositiveHeightMetres - VNegativeHeightMetres)
+			/ (TangentSampleDistanceMetres * 2.0);
+
+		const double GradientMagnitude =
+			std::sqrt((GradientU * GradientU) + (GradientV * GradientV));
+
+		const double SlopeDegrees =
+			std::atan(GradientMagnitude) * DegreesPerRadian;
+
+		OutSlopeNormalised = FMath::Clamp(
+			SlopeDegrees / MaximumVisualSlopeDegrees,
+			0.0,
+			1.0);
+
+		return FMath::IsFinite(OutSlopeNormalised);
+	}
+
+	/**
+	 * @brief Returns a saturated terrain-steepness diagnostic colour.
+	 *
+	 * @param SlopeNormalised 0 to 1 macro-terrain slope estimate.
+	 * @param Intensity Local preview brightness multiplier.
+	 *
+	 * @return Stable diagnostic colour from flat terrain to steep terrain.
+	 */
+	FLinearColor GetTerrainSlopeDebugColour(
+		const double SlopeNormalised,
+		const float Intensity)
+	{
+		const FLinearColor FlatColour(0.01f, 0.05f, 0.20f);
+		const FLinearColor GentleColour(0.00f, 0.72f, 0.70f);
+		const FLinearColor SteepColour(1.00f, 0.78f, 0.00f);
+		const FLinearColor ExtremeColour(1.00f, 0.06f, 0.02f);
+
+		const float SafeSlope =
+			static_cast<float>(FMath::Clamp(SlopeNormalised, 0.0, 1.0));
+
+		FLinearColor BaseColour = FlatColour;
+
+		if (SafeSlope <= 0.33f)
+		{
+			BaseColour = FMath::Lerp(
+				FlatColour,
+				GentleColour,
+				SafeSlope / 0.33f);
+		}
+		else if (SafeSlope <= 0.66f)
+		{
+			BaseColour = FMath::Lerp(
+				GentleColour,
+				SteepColour,
+				(SafeSlope - 0.33f) / 0.33f);
+		}
+		else
+		{
+			BaseColour = FMath::Lerp(
+				SteepColour,
+				ExtremeColour,
+				(SafeSlope - 0.66f) / 0.34f);
+		}
+
+		return ApplyDebugColourIntensity(BaseColour, Intensity);
+	}
+
+	/**
+	 * @brief Selects one local preview vertex colour from the active debug mode.
+	 *
+	 * @param DebugColourMode Requested visualisation mode.
+	 * @param ChunkDebugColour Stable address-based patch colour.
+	 * @param RuntimeState Planet state used for height normalisation and slope probes.
+	 * @param UnitDirection Global sample direction.
+	 * @param TerrainSample Current deterministic terrain sample.
+	 * @param Intensity Local preview brightness multiplier.
+	 *
+	 * @return Vertex colour for the active local diagnostic mode.
+	 */
+	FLinearColor GetPreviewVertexDebugColour(
+		const EVoraxiaPlanetPreviewDebugColourMode DebugColourMode,
+		const FLinearColor& ChunkDebugColour,
+		const FVoraxiaPlanetRuntimeState& RuntimeState,
+		const FVector3d& UnitDirection,
+		const FVoraxiaPlanetTerrainSample& TerrainSample,
+		const float Intensity)
+	{
+		switch (DebugColourMode)
+		{
+		case EVoraxiaPlanetPreviewDebugColourMode::TerrainHeight:
+			return GetTerrainHeightDebugColour(
+				RuntimeState,
+				TerrainSample.HeightMetres,
+				Intensity);
+
+		case EVoraxiaPlanetPreviewDebugColourMode::TerrainSlope:
+		{
+			double SlopeNormalised = 0.0;
+
+			return TrySampleMacroTerrainSlopeNormalised(
+				RuntimeState,
+				UnitDirection,
+				SlopeNormalised)
+				? GetTerrainSlopeDebugColour(
+					SlopeNormalised,
+					Intensity)
+				: ChunkDebugColour;
+		}
+
+		case EVoraxiaPlanetPreviewDebugColourMode::ChunkAddress:
+		default:
+			return ChunkDebugColour;
+		}
+	}
+
 	/**
 	 * @brief Attempts to load Unreal's vertex-colour debug material.
 	 *
@@ -114,8 +423,10 @@ namespace
 	 * @param PreviewPlanetRadiusCentimetres Local compressed preview radius.
 	 * @param bApplyMacroTerrain Whether deterministic macro terrain should offset vertices.
 	 * @param VisualTerrainHeightExaggeration Preview-only multiplier applied to sampled height.
-	 * @param bUseDebugVertexColours Whether vertices should receive the supplied colour.
-	 * @param DebugColour Stable preview colour for this chunk.
+	 * @param bUseDebugVertexColours Whether vertices should receive diagnostic vertex colours.
+	 * @param DebugColourMode Local diagnostic visualisation mode.
+	 * @param DebugColourIntensity Brightness multiplier for the selected diagnostic colour.
+	 * @param DebugColour Stable address-based fallback colour for this chunk.
 	 * @param OutMesh Receives generated Dynamic Mesh geometry.
 	 *
 	 * @return True when a valid patch mesh was generated.
@@ -128,6 +439,8 @@ namespace
 		const bool bApplyMacroTerrain,
 		const double VisualTerrainHeightExaggeration,
 		const bool bUseDebugVertexColours,
+		const EVoraxiaPlanetPreviewDebugColourMode DebugColourMode,
+		const float DebugColourIntensity,
 		const FLinearColor& DebugColour,
 		FDynamicMesh3& OutMesh)
 	{
@@ -232,12 +545,6 @@ namespace
 		const double PreviewCentimetresPerPlanetMetre =
 			SafePreviewRadiusCentimetres / PlanetRadiusMetres;
 
-		const FVector4f VertexColour(
-			DebugColour.R,
-			DebugColour.G,
-			DebugColour.B,
-			1.0f);
-
 		for (int32 VIndex = 0; VIndex < VerticesPerAxis; ++VIndex)
 		{
 			const double VAlpha =
@@ -276,31 +583,35 @@ namespace
 
 				/**
 				 * Macro terrain is sampled in global direction space rather than
-				 * face-local coordinates. This makes the height field continuous at
-				 * every cube-face seam.
+				 * face-local coordinates. This makes height and diagnostic fields
+				 * continuous at every cube-face seam.
 				 *
-				 * The optional visual exaggeration affects only the compressed editor
-				 * preview. World-scale terrain and gameplay will use the unmodified
-				 * deterministic height sample.
+				 * Height and slope colour modes deliberately sample the field even
+				 * when visual displacement is disabled, allowing a smooth reference
+				 * sphere to be inspected with the underlying terrain signals.
 				 */
-				double TerrainHeightMetres = 0.0;
+				const bool bRequiresTerrainSample =
+					bApplyMacroTerrain
+					|| (ColourOverlay != nullptr
+						&& DebugColourMode
+							!= EVoraxiaPlanetPreviewDebugColourMode::ChunkAddress);
 
-				if (bApplyMacroTerrain)
-				{
-					FVoraxiaPlanetTerrainSample TerrainSample;
+				FVoraxiaPlanetTerrainSample TerrainSample;
 
-					if (!VoraxiaPlanetTerrain::SampleMacroTerrain(
+				if (bRequiresTerrainSample
+					&& !VoraxiaPlanetTerrain::SampleMacroTerrain(
 						RuntimeState,
 						UnitDirection,
 						TerrainSample))
-					{
-						return false;
-					}
-
-					TerrainHeightMetres =
-						TerrainSample.HeightMetres
-						* SafeVisualTerrainHeightExaggeration;
+				{
+					return false;
 				}
+
+				const double TerrainHeightMetres =
+					bApplyMacroTerrain
+					? TerrainSample.HeightMetres
+						* SafeVisualTerrainHeightExaggeration
+					: 0.0;
 
 				const double SurfaceRadiusMetres =
 					PlanetRadiusMetres + TerrainHeightMetres;
@@ -327,8 +638,22 @@ namespace
 
 				if (ColourOverlay != nullptr)
 				{
+					const FLinearColor VertexDebugColour =
+						GetPreviewVertexDebugColour(
+							DebugColourMode,
+							DebugColour,
+							RuntimeState,
+							UnitDirection,
+							TerrainSample,
+							DebugColourIntensity);
+
 					ColourElementIds[VertexArrayIndex] =
-						ColourOverlay->AppendElement(VertexColour);
+						ColourOverlay->AppendElement(
+							FVector4f(
+								VertexDebugColour.R,
+								VertexDebugColour.G,
+								VertexDebugColour.B,
+								1.0f));
 				}
 			}
 		}
@@ -431,6 +756,7 @@ namespace
 		const bool bApplyMacroTerrain,
 		const double VisualTerrainHeightExaggeration,
 		const bool bUseDebugVertexColours,
+		const EVoraxiaPlanetPreviewDebugColourMode DebugColourMode,
 		const float DebugColourIntensity,
 		FDynamicMesh3& OutMesh)
 	{
@@ -486,6 +812,8 @@ namespace
 						bApplyMacroTerrain,
 						VisualTerrainHeightExaggeration,
 						bUseDebugVertexColours,
+						DebugColourMode,
+						DebugColourIntensity,
 						GetChunkDebugColour(
 							ChunkId,
 							DebugColourIntensity),
@@ -614,6 +942,7 @@ RefreshFromPlanetRuntimeState(
 			bApplyMacroTerrain,
 			VisualTerrainHeightExaggeration,
 			bUseChunkDebugColours,
+			DebugColourMode,
 			DebugColourIntensity,
 			GeneratedMesh);
 	}
@@ -644,6 +973,8 @@ RefreshFromPlanetRuntimeState(
 					bApplyMacroTerrain,
 					VisualTerrainHeightExaggeration,
 					bUseChunkDebugColours,
+					DebugColourMode,
+					DebugColourIntensity,
 					GetChunkDebugColour(
 						ChunkId,
 						DebugColourIntensity),
@@ -710,6 +1041,9 @@ PostEditChangeProperty(
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
 			bUseChunkDebugColours)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			DebugColourMode)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
 			DebugColourIntensity)
