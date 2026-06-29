@@ -26,6 +26,7 @@ struct FPropertyChangedEvent;
  *
  * - A local design-time planet definition asset.
  * - Compact server-authored runtime state replicated to clients.
+ * - A server-resolved immutable feature-profile contract in that runtime state.
  * - A local-only cube-sphere debug visualisation component.
  *
  * Terrain generation, chunk streaming, gravity application, terrain edits,
@@ -47,6 +48,15 @@ public:
 	 * @brief Initialises server-owned runtime planet state from the definition asset.
 	 */
 	virtual void BeginPlay() override;
+
+#if WITH_EDITOR
+	/**
+	 * @brief Rebuilds non-authoritative editor preview data when the actor is constructed.
+	 *
+	 * @param Transform Actor transform supplied by Unreal's construction process.
+	 */
+	virtual void OnConstruction(const FTransform& Transform) override;
+#endif
 
 	/**
 	 * @brief Registers replicated properties for this actor.
@@ -74,6 +84,45 @@ public:
 		ReplicatedUsing = OnRep_PlanetRuntimeState,
 		Category = "Voraxia Planet")
 	FVoraxiaPlanetRuntimeState PlanetRuntimeState;
+
+#if WITH_EDITORONLY_DATA
+	/**
+	 * @brief Non-authoritative runtime state derived from PlanetDefinition for editor inspection.
+	 *
+	 * This field exists solely to make the resolved feature-profile contract visible
+	 * before PIE. It is never replicated, saved as planet runtime state, or used by
+	 * gameplay. The authoritative PlanetRuntimeState remains server-created in BeginPlay.
+	 */
+	UPROPERTY(
+		VisibleInstanceOnly,
+		BlueprintReadOnly,
+		Transient,
+		Category = "Voraxia Planet|Editor Preview")
+	FVoraxiaPlanetRuntimeState EditorPreviewRuntimeState;
+
+	/**
+	 * @brief Direct editor-only view of the feature profile selected by PlanetDefinition.
+	 *
+	 * This is read-only and is refreshed from the assigned definition. Assign the
+	 * profile on the definition asset, not on this actor.
+	 */
+	UPROPERTY(
+		VisibleInstanceOnly,
+		BlueprintReadOnly,
+		Transient,
+		Category = "Voraxia Planet|Editor Preview")
+	TObjectPtr<UVoraxiaPlanetFeatureProfile> EditorPreviewFeatureProfile;
+
+	/**
+	 * @brief Editor-only explanation of the current preview contract state.
+	 */
+	UPROPERTY(
+		VisibleInstanceOnly,
+		BlueprintReadOnly,
+		Transient,
+		Category = "Voraxia Planet|Editor Preview")
+	FString EditorPreviewValidationStatus;
+#endif
 
 	/**
 	 * @brief Returns this actor's design-time definition asset.
@@ -124,7 +173,7 @@ public:
 protected:
 #if WITH_EDITOR
 	/**
-	 * @brief Refreshes the local preview when the assigned definition changes.
+	 * @brief Refreshes editor preview state and geometry when the definition changes.
 	 *
 	 * @param PropertyChangedEvent Description of the edited Details-panel property.
 	 */
@@ -166,6 +215,16 @@ protected:
 	void OnRep_PlanetRuntimeState();
 
 private:
+#if WITH_EDITOR
+	/**
+	 * @brief Resolves an editor-only, non-authoritative preview contract from PlanetDefinition.
+	 *
+	 * The result is for Details-panel inspection only. It must not replace or mutate
+	 * the server-authored PlanetRuntimeState.
+	 */
+	void RefreshEditorPreviewRuntimeState();
+#endif
+
 	/**
 	 * @brief Creates authoritative runtime state from the local definition asset.
 	 *

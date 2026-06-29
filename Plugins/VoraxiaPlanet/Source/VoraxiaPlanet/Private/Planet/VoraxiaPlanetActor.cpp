@@ -120,6 +120,23 @@ AVoraxiaPlanetActor::AVoraxiaPlanetActor()
 	SetReplicateMovement(false);
 }
 
+#if WITH_EDITOR
+void AVoraxiaPlanetActor::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	const UWorld* World = GetWorld();
+
+	if (!IsValid(World) || World->IsGameWorld())
+	{
+		return;
+	}
+
+	RefreshEditorPreviewRuntimeState();
+	RebuildTerrainPreview();
+}
+#endif
+
 void AVoraxiaPlanetActor::RebuildTerrainPreview()
 {
 	if (IsValid(PlanetSurfacePatchPreviewComponent))
@@ -129,6 +146,38 @@ void AVoraxiaPlanetActor::RebuildTerrainPreview()
 }
 
 #if WITH_EDITOR
+void AVoraxiaPlanetActor::RefreshEditorPreviewRuntimeState()
+{
+#if WITH_EDITORONLY_DATA
+	EditorPreviewRuntimeState = FVoraxiaPlanetRuntimeState();
+	EditorPreviewFeatureProfile = nullptr;
+	EditorPreviewValidationStatus =
+		TEXT("No Planet Definition has been assigned.");
+
+	if (!IsValid(PlanetDefinition))
+	{
+		return;
+	}
+
+	EditorPreviewFeatureProfile = PlanetDefinition->FeatureProfile;
+
+	FString ValidationFailureReason;
+
+	if (!PlanetDefinition->IsDefinitionValid(ValidationFailureReason))
+	{
+		EditorPreviewValidationStatus = FString::Printf(
+			TEXT("Definition is invalid: %s"),
+			*ValidationFailureReason);
+
+		return;
+	}
+
+	EditorPreviewRuntimeState = PlanetDefinition->CreateRuntimeState();
+	EditorPreviewValidationStatus =
+		TEXT("Valid editor preview. Runtime state remains server-authoritative during play.");
+#endif
+}
+
 void AVoraxiaPlanetActor::PostEditChangeProperty(
 	FPropertyChangedEvent& PropertyChangedEvent)
 {
@@ -141,6 +190,7 @@ void AVoraxiaPlanetActor::PostEditChangeProperty(
 		AVoraxiaPlanetActor,
 		PlanetDefinition))
 	{
+		RefreshEditorPreviewRuntimeState();
 		RebuildTerrainPreview();
 	}
 }
@@ -292,7 +342,7 @@ void AVoraxiaPlanetActor::LogPlanetRuntimeState(
 	UE_LOG(
 		LogVoraxiaPlanet,
 		Log,
-		TEXT("[%s] %s | World=%s | NetMode=%s | Role=%s | Definition=%s | PlanetId=%s | Seed=%d | GeneratorVersion=%d | Radius=%.2f km"),
+		TEXT("[%s] %s | World=%s | NetMode=%s | Role=%s | Definition=%s | PlanetId=%s | Seed=%d | GeneratorVersion=%d | FeatureProfile=%s | FeatureProfileVersion=%d | Radius=%.2f km"),
 		*GetName(),
 		Context,
 		*WorldName,
@@ -303,5 +353,7 @@ void AVoraxiaPlanetActor::LogPlanetRuntimeState(
 			EGuidFormats::DigitsWithHyphens),
 		PlanetRuntimeState.Seed,
 		PlanetRuntimeState.GeneratorVersion,
+		*PlanetRuntimeState.FeatureProfileId.ToString(),
+		PlanetRuntimeState.FeatureProfileVersion,
 		RadiusKilometres);
 }

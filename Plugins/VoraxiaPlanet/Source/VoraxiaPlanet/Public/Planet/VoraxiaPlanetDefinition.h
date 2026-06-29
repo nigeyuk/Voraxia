@@ -7,6 +7,7 @@
 #include "Engine/DataAsset.h"
 
 #include "Core/VoraxiaPlanetTypes.h"
+#include "Planet/VoraxiaPlanetFeatureProfile.h"
 
 #include "VoraxiaPlanetDefinition.generated.h"
 
@@ -82,8 +83,64 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics")
 	double SurfaceGravityMetresPerSecondSquared = 0.0;
 
+	/**
+	 * Stable identifier of the authored feature profile resolved by the server.
+	 *
+	 * Clients generate from the copied controls below rather than dereferencing
+	 * a mutable data asset while reconstructing planet content.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation")
+	FPrimaryAssetId FeatureProfileId;
+
+	/**
+	 * Authored revision of the resolved feature profile.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation")
+	int32 FeatureProfileVersion = 0;
+
+	/** @brief Server-resolved impact-cratering control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl ImpactCratering;
+
+	/** @brief Server-resolved tectonic control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl Tectonics;
+
+	/** @brief Server-resolved volcanic or cryovolcanic control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl Volcanism;
+
+	/** @brief Server-resolved hydrology and basin-erosion control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl Hydrology;
+
+	/** @brief Server-resolved polar, glacial, or global ice control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl Ice;
+
+	/** @brief Server-resolved cave and void-generation control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl Caves;
+
+	/** @brief Server-resolved ore-body and geological-resource control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl OreBodies;
+
+	/** @brief Server-resolved environmental-hazard control. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Generation|Features")
+	FVoraxiaPlanetFeatureControl Hazards;
+
 	bool IsValid() const
 	{
+		const auto IsFeatureControlValid =
+			[](const FVoraxiaPlanetFeatureControl& FeatureControl)
+			{
+				return FMath::IsFinite(FeatureControl.Intensity)
+					&& FMath::IsFinite(FeatureControl.Frequency)
+					&& FeatureControl.Intensity >= 0.0
+					&& FeatureControl.Frequency >= 0.0;
+			};
+
 		return PlanetId.IsValid()
 			&& !DefinitionName.IsNone()
 			&& GeneratorVersion > 0
@@ -91,10 +148,20 @@ public:
 			&& MaximumTerrainHeightMetres >= 0.0
 			&& MaximumTerrainDepthMetres >= 0.0
 			&& SurfaceGravityMetresPerSecondSquared > 0.0
+			&& FeatureProfileId.IsValid()
+			&& FeatureProfileVersion > 0
 			&& FMath::IsFinite(RadiusMetres)
 			&& FMath::IsFinite(MaximumTerrainHeightMetres)
 			&& FMath::IsFinite(MaximumTerrainDepthMetres)
-			&& FMath::IsFinite(SurfaceGravityMetresPerSecondSquared);
+			&& FMath::IsFinite(SurfaceGravityMetresPerSecondSquared)
+			&& IsFeatureControlValid(ImpactCratering)
+			&& IsFeatureControlValid(Tectonics)
+			&& IsFeatureControlValid(Volcanism)
+			&& IsFeatureControlValid(Hydrology)
+			&& IsFeatureControlValid(Ice)
+			&& IsFeatureControlValid(Caves)
+			&& IsFeatureControlValid(OreBodies)
+			&& IsFeatureControlValid(Hazards);
 	}
 };
 
@@ -151,6 +218,16 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Generation", meta = (ClampMin = "1"))
 	int32 GeneratorVersion = 1;
+
+	/**
+	 * Authored feature profile used to resolve this planet's geological and
+	 * environmental-generation rules.
+	 *
+	 * The server validates this asset, then copies its identifier, version, and
+	 * feature controls into FVoraxiaPlanetRuntimeState.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Generation")
+	TObjectPtr<UVoraxiaPlanetFeatureProfile> FeatureProfile;
 
 	/**
 	 * Radius of the reference sphere, in metres.

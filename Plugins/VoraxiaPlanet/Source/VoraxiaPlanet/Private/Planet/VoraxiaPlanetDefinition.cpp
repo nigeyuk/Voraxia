@@ -2,6 +2,8 @@
 
 #include "Planet/VoraxiaPlanetDefinition.h"
 
+#include "Planet/VoraxiaPlanetFeatureProfile.h"
+
 const FPrimaryAssetType UVoraxiaPlanetDefinition::PrimaryAssetType(TEXT("VoraxiaPlanetDefinition"));
 
 FPrimaryAssetId UVoraxiaPlanetDefinition::GetPrimaryAssetId() const
@@ -28,6 +30,35 @@ bool UVoraxiaPlanetDefinition::IsDefinitionValid(FString& OutFailureReason) cons
 	if (GeneratorVersion <= 0)
 	{
 		OutFailureReason = TEXT("GeneratorVersion must be greater than zero.");
+		return false;
+	}
+
+	if (!IsValid(FeatureProfile))
+	{
+		OutFailureReason =
+			TEXT("FeatureProfile must be assigned before using this planet definition.");
+
+		return false;
+	}
+
+	FString FeatureProfileValidationFailureReason;
+
+	if (!FeatureProfile->IsProfileValid(FeatureProfileValidationFailureReason))
+	{
+		OutFailureReason = FString::Printf(
+			TEXT("FeatureProfile '%s' is invalid: %s"),
+			*FeatureProfile->GetName(),
+			*FeatureProfileValidationFailureReason);
+
+		return false;
+	}
+
+	if (!FeatureProfile->GetPrimaryAssetId().IsValid())
+	{
+		OutFailureReason = FString::Printf(
+			TEXT("FeatureProfile '%s' does not have a valid primary asset ID."),
+			*FeatureProfile->GetName());
+
 		return false;
 	}
 
@@ -73,6 +104,25 @@ FVoraxiaPlanetRuntimeState UVoraxiaPlanetDefinition::CreateRuntimeState() const
 	RuntimeState.DefinitionName = GetFName();
 	RuntimeState.Seed = Seed;
 	RuntimeState.GeneratorVersion = GeneratorVersion;
+	RuntimeState.FeatureProfileId = IsValid(FeatureProfile)
+		? FeatureProfile->GetPrimaryAssetId()
+		: FPrimaryAssetId();
+	RuntimeState.FeatureProfileVersion = IsValid(FeatureProfile)
+		? FeatureProfile->ProfileVersion
+		: 0;
+
+	if (IsValid(FeatureProfile))
+	{
+		RuntimeState.ImpactCratering = FeatureProfile->ImpactCratering;
+		RuntimeState.Tectonics = FeatureProfile->Tectonics;
+		RuntimeState.Volcanism = FeatureProfile->Volcanism;
+		RuntimeState.Hydrology = FeatureProfile->Hydrology;
+		RuntimeState.Ice = FeatureProfile->Ice;
+		RuntimeState.Caves = FeatureProfile->Caves;
+		RuntimeState.OreBodies = FeatureProfile->OreBodies;
+		RuntimeState.Hazards = FeatureProfile->Hazards;
+	}
+
 	RuntimeState.RadiusMetres = RadiusMetres;
 	RuntimeState.MaximumTerrainHeightMetres = MaximumTerrainHeightMetres;
 	RuntimeState.MaximumTerrainDepthMetres = MaximumTerrainDepthMetres;
