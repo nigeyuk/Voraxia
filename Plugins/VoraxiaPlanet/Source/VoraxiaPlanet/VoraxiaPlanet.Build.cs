@@ -20,8 +20,21 @@ public class VoraxiaPlanet : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"GeometryCore"
+				"GeometryCore",
+				"InputCore",
+				"Slate",
+				"SlateCore"
 			}
 		);
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+					"UnrealEd"
+				}
+			);
+		}
 	}
 }

@@ -11,9 +11,23 @@
 #include "Planet/VoraxiaPlanetActor.h"
 #include "Planet/VoraxiaPlanetDefinition.h"
 #include "Planet/VoraxiaPlanetMath.h"
+#include "Terrain/VoraxiaPlanetTerrainGenerator.h"
+#include "Terrain/VoraxiaPlanetBaseTerrain.h"
+#include "Terrain/Features/VoraxiaPlanetTectonics.h"
+#include "Debug/SVoraxiaTerrainProbeWidget.h"
 
+#include "LevelEditorViewport.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "InputCoreTypes.h"
+#include "Kismet/GameplayStatics.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
+
+#if WITH_EDITOR
+#include "EditorViewportClient.h"
+#endif
 
 namespace
 {
@@ -112,6 +126,105 @@ namespace
 	{
 		return FMath::IsFinite(Value);
 	}
+
+	/**
+	 * @brief Converts a normalised direction into stable cube-face coordinates.
+	 *
+	 * @param UnitDirection Normalised direction from the planet centre.
+	 * @param PlanetRadiusMetres Reference planet radius in metres.
+	 * @param OutFace Receives the resolved cube face.
+	 * @param OutUMetres Receives face-local U coordinate in metres.
+	 * @param OutVMetres Receives face-local V coordinate in metres.
+	 *
+	 * @return True when a valid face coordinate was produced.
+	 */
+	bool TryConvertUnitDirectionToFaceCoordinates(
+		const FVector3d& UnitDirection,
+		const double PlanetRadiusMetres,
+		EVoraxiaCubeFace& OutFace,
+		double& OutUMetres,
+		double& OutVMetres)
+	{
+		OutFace = EVoraxiaCubeFace::Invalid;
+		OutUMetres = 0.0;
+		OutVMetres = 0.0;
+
+		if (UnitDirection.SizeSquared() <= 0.000000000001
+			|| !FMath::IsFinite(PlanetRadiusMetres)
+			|| PlanetRadiusMetres <= 0.0)
+		{
+			return false;
+		}
+
+		const FVector3d SafeUnitDirection =
+			UnitDirection.GetSafeNormal();
+
+		const double AbsoluteX = FMath::Abs(SafeUnitDirection.X);
+		const double AbsoluteY = FMath::Abs(SafeUnitDirection.Y);
+		const double AbsoluteZ = FMath::Abs(SafeUnitDirection.Z);
+
+		if (AbsoluteX >= AbsoluteY && AbsoluteX >= AbsoluteZ)
+		{
+			OutFace = SafeUnitDirection.X >= 0.0
+				? EVoraxiaCubeFace::PositiveX
+				: EVoraxiaCubeFace::NegativeX;
+		}
+		else if (AbsoluteY >= AbsoluteZ)
+		{
+			OutFace = SafeUnitDirection.Y >= 0.0
+				? EVoraxiaCubeFace::PositiveY
+				: EVoraxiaCubeFace::NegativeY;
+		}
+		else
+		{
+			OutFace = SafeUnitDirection.Z >= 0.0
+				? EVoraxiaCubeFace::PositiveZ
+				: EVoraxiaCubeFace::NegativeZ;
+		}
+
+		FVector3d FaceNormal;
+		FVector3d FaceUAxis;
+		FVector3d FaceVAxis;
+
+		if (!VoraxiaPlanetMath::GetCubeFaceBasis(
+			OutFace,
+			FaceNormal,
+			FaceUAxis,
+			FaceVAxis))
+		{
+			return false;
+		}
+
+		const double FaceNormalComponent =
+			FMath::Abs(FVector3d::DotProduct(
+				SafeUnitDirection,
+				FaceNormal));
+
+		if (FaceNormalComponent <= 0.000000000001)
+		{
+			return false;
+		}
+
+		const FVector3d CubeFacePoint =
+			SafeUnitDirection / FaceNormalComponent;
+
+		OutUMetres =
+			FVector3d::DotProduct(
+				CubeFacePoint,
+				FaceUAxis)
+			* PlanetRadiusMetres;
+
+		OutVMetres =
+			FVector3d::DotProduct(
+				CubeFacePoint,
+				FaceVAxis)
+			* PlanetRadiusMetres;
+
+		return VoraxiaPlanetMath::IsFaceCoordinateWithinBounds(
+			OutUMetres,
+			OutVMetres,
+			PlanetRadiusMetres);
+	}
 }
 
 UVoraxiaPlanetDebugComponent::UVoraxiaPlanetDebugComponent()
@@ -124,6 +237,21 @@ UVoraxiaPlanetDebugComponent::UVoraxiaPlanetDebugComponent()
 	PrimaryComponentTick.bStartWithTickEnabled = true;
 }
 
+void UVoraxiaPlanetDebugComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	EnsureTerrainProbeOverlay();
+}
+
+void UVoraxiaPlanetDebugComponent::EndPlay(
+	const EEndPlayReason::Type EndPlayReason)
+{
+	RemoveTerrainProbeOverlay();
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void UVoraxiaPlanetDebugComponent::TickComponent(
 	const float DeltaTime,
 	const ELevelTick TickType,
@@ -133,8 +261,386 @@ void UVoraxiaPlanetDebugComponent::TickComponent(
 
 	if (ShouldDrawDebugVisualisation())
 	{
+		EnsureTerrainProbeOverlay();
+
+		if (bEnableFreeCameraTerrainProbe
+			&& bContinuouslySampleTerrainProbe)
+		{
+			SampleTerrainFromCurrentView();
+		}
+		else
+		{
+			TryUpdateTerrainProbeFromCameraInput();
+		}
+
 		DrawPlanetReferenceFrame();
 	}
+	else
+	{
+		bWasTerrainProbeInputDown = false;
+	}
+}
+
+void UVoraxiaPlanetDebugComponent::EnsureTerrainProbeOverlay()
+{
+	if (!bShowTerrainProbeOverlay
+		|| TerrainProbeOverlayWidget.IsValid()
+		|| GEngine == nullptr
+		|| GEngine->GameViewport == nullptr)
+	{
+		return;
+	}
+
+	TerrainProbeOverlayWidget =
+		SNew(SVoraxiaTerrainProbeWidget)
+		.DebugComponent(this);
+
+	GEngine->GameViewport->AddViewportWidgetContent(
+		TerrainProbeOverlayWidget.ToSharedRef(),
+		100);
+}
+
+void UVoraxiaPlanetDebugComponent::RemoveTerrainProbeOverlay()
+{
+	if (!TerrainProbeOverlayWidget.IsValid())
+	{
+		return;
+	}
+
+	if (GEngine != nullptr && GEngine->GameViewport != nullptr)
+	{
+		GEngine->GameViewport->RemoveViewportWidgetContent(
+			TerrainProbeOverlayWidget.ToSharedRef());
+	}
+
+	TerrainProbeOverlayWidget.Reset();
+}
+
+bool UVoraxiaPlanetDebugComponent::TryGetEditorFreeCameraView(
+	FVector& OutCameraLocation,
+	FRotator& OutCameraRotation) const
+{
+#if WITH_EDITOR
+	/**
+	 * F8 eject runs through Unreal's editor viewport client, not through the
+	 * possessed player pawn. Query it first so the terrain inspector follows
+	 * the active free camera. Normal player camera sampling remains a fallback.
+	 */
+	if (GCurrentLevelEditingViewportClient != nullptr)
+	{
+		OutCameraLocation =
+			GCurrentLevelEditingViewportClient->GetViewLocation();
+
+		OutCameraRotation =
+			GCurrentLevelEditingViewportClient->GetViewRotation();
+
+		return true;
+	}
+#endif
+
+	return false;
+}
+
+FText UVoraxiaPlanetDebugComponent::GetTerrainProbeDisplayText() const
+{
+	const AVoraxiaPlanetActor* PlanetActor =
+		Cast<AVoraxiaPlanetActor>(GetOwner());
+
+	if (!IsValid(PlanetActor))
+	{
+		return FText::FromString(
+			TEXT("VORAXIA TERRAIN PROBE\n\nPlanet actor unavailable."));
+	}
+
+	const FVoraxiaPlanetRuntimeState RuntimeState =
+		PlanetActor->GetPlanetRuntimeState();
+
+	if (!RuntimeState.IsValid())
+	{
+		return FText::FromString(
+			TEXT("VORAXIA TERRAIN PROBE\n\nWaiting for valid runtime state."));
+	}
+
+	FVector3d UnitDirection;
+	double SampleRadialDistanceMetres = 0.0;
+
+	if (!TryGetSelectedSurfaceSample(
+		RuntimeState,
+		UnitDirection,
+		SampleRadialDistanceMetres))
+	{
+		return FText::FromString(
+			TEXT("VORAXIA TERRAIN PROBE\n\nSelected sample is invalid."));
+	}
+
+	FVoraxiaPlanetTerrainSample TerrainSample;
+
+	if (!VoraxiaPlanetTerrain::SampleMacroTerrain(
+		RuntimeState,
+		UnitDirection,
+		TerrainSample))
+	{
+		return FText::FromString(
+			TEXT("VORAXIA TERRAIN PROBE\n\nTerrain sample failed."));
+	}
+
+	const double SurfaceRadiusMetres =
+		RuntimeState.RadiusMetres
+		+ TerrainSample.HeightMetres;
+
+	const double OffsetFromTerrainMetres =
+		DebugSurfaceSampleAltitudeMetres
+		- TerrainSample.HeightMetres;
+
+	FString Readout = FString::Printf(
+		TEXT("VORAXIA TERRAIN PROBE\n")
+		TEXT("Live centre-reticle sample\n\n")
+		TEXT("Face                 %s\n")
+		TEXT("U / V                %+.1f / %+.1f m\n")
+		TEXT("Terrain Height       %+.1f m\n")
+		TEXT("Surface Radius       %.1f m\n")
+		TEXT("Offset From Terrain  %+.1f m\n\n")
+		TEXT("Continentalness      %.3f\n")
+		TEXT("Mountainness         %.3f"),
+		GetCubeFaceLabel(DebugSurfaceSampleFace),
+		DebugSurfaceSampleUMetres,
+		DebugSurfaceSampleVMetres,
+		TerrainSample.HeightMetres,
+		SurfaceRadiusMetres,
+		OffsetFromTerrainMetres,
+		TerrainSample.Continentalness,
+		TerrainSample.Mountainness);
+
+	if (RuntimeState.GeneratorVersion == 2)
+	{
+		FVoraxiaPlanetBaseTerrainSample BaseTerrain;
+		FVoraxiaPlanetTectonicsSample Tectonics;
+
+		if (VoraxiaPlanetBaseTerrain::SampleBaseTerrain(
+			RuntimeState,
+			UnitDirection,
+			BaseTerrain)
+			&& VoraxiaPlanetTectonics::SampleTectonics(
+				RuntimeState,
+				UnitDirection,
+				BaseTerrain.Continentalness,
+				Tectonics))
+		{
+			Readout += FString::Printf(
+				TEXT("\n\nTECTONICS\n")
+				TEXT("Uplift               %+.1f m\n")
+				TEXT("Rift Depth           %+.1f m\n")
+				TEXT("Activity             %.3f"),
+				Tectonics.UpliftMetres,
+				Tectonics.RiftDepthMetres,
+				Tectonics.Activity);
+		}
+	}
+
+	return FText::FromString(Readout);
+}
+
+bool UVoraxiaPlanetDebugComponent::ShouldShowTerrainProbeOverlay() const
+{
+	return bShowTerrainProbeOverlay
+		&& ShouldDrawDebugVisualisation();
+}
+
+bool UVoraxiaPlanetDebugComponent::SampleTerrainFromCurrentView()
+{
+	AVoraxiaPlanetActor* PlanetActor =
+		Cast<AVoraxiaPlanetActor>(GetOwner());
+
+	if (!IsValid(PlanetActor))
+	{
+		return false;
+	}
+
+	const FVoraxiaPlanetRuntimeState RuntimeState =
+		PlanetActor->GetPlanetRuntimeState();
+
+	if (!RuntimeState.IsValid())
+	{
+		return false;
+	}
+
+	FVector3d UnitDirection;
+
+	if (!TryGetPreviewSphereDirectionFromCurrentView(UnitDirection))
+	{
+		return false;
+	}
+
+	EVoraxiaCubeFace ResolvedFace = EVoraxiaCubeFace::Invalid;
+	double ResolvedUMetres = 0.0;
+	double ResolvedVMetres = 0.0;
+
+	if (!TryConvertUnitDirectionToFaceCoordinates(
+		UnitDirection,
+		RuntimeState.RadiusMetres,
+		ResolvedFace,
+		ResolvedUMetres,
+		ResolvedVMetres))
+	{
+		return false;
+	}
+
+	FVoraxiaPlanetTerrainSample TerrainSample;
+
+	if (!VoraxiaPlanetTerrain::SampleMacroTerrain(
+		RuntimeState,
+		UnitDirection,
+		TerrainSample))
+	{
+		return false;
+	}
+
+	/**
+	 * Set selected altitude to the sampled terrain height, placing the marker
+	 * on generated ground rather than on the mathematical reference sphere.
+	 */
+	DebugSurfaceSampleFace = ResolvedFace;
+	DebugSurfaceSampleUMetres = ResolvedUMetres;
+	DebugSurfaceSampleVMetres = ResolvedVMetres;
+	DebugSurfaceSampleAltitudeMetres = TerrainSample.HeightMetres;
+
+	return true;
+}
+
+bool UVoraxiaPlanetDebugComponent::TryUpdateTerrainProbeFromCameraInput()
+{
+	if (!bEnableFreeCameraTerrainProbe
+		|| !bProbeTerrainWithMiddleMouseButton)
+	{
+		bWasTerrainProbeInputDown = false;
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+
+	if (!IsValid(World))
+	{
+		bWasTerrainProbeInputDown = false;
+		return false;
+	}
+
+	APlayerController* PlayerController =
+		UGameplayStatics::GetPlayerController(World, 0);
+
+	if (!IsValid(PlayerController))
+	{
+		bWasTerrainProbeInputDown = false;
+		return false;
+	}
+
+	const bool bMiddleMouseDown =
+		PlayerController->IsInputKeyDown(EKeys::MiddleMouseButton);
+
+	const bool bShouldSample =
+		bMiddleMouseDown
+		&& !bWasTerrainProbeInputDown;
+
+	bWasTerrainProbeInputDown = bMiddleMouseDown;
+
+	return bShouldSample
+		? SampleTerrainFromCurrentView()
+		: false;
+}
+
+bool UVoraxiaPlanetDebugComponent::
+TryGetPreviewSphereDirectionFromCurrentView(
+	FVector3d& OutUnitDirection) const
+{
+	OutUnitDirection = FVector3d::ZeroVector;
+
+	const AVoraxiaPlanetActor* PlanetActor =
+		Cast<AVoraxiaPlanetActor>(GetOwner());
+
+	UWorld* World = GetWorld();
+
+	if (!IsValid(PlanetActor) || !IsValid(World))
+	{
+		return false;
+	}
+
+	FVector CameraLocation;
+	FRotator CameraRotation;
+
+	if (!TryGetEditorFreeCameraView(
+		CameraLocation,
+		CameraRotation))
+	{
+		APlayerController* PlayerController =
+			UGameplayStatics::GetPlayerController(World, 0);
+
+		if (!IsValid(PlayerController))
+		{
+			return false;
+		}
+
+		PlayerController->GetPlayerViewPoint(
+			CameraLocation,
+			CameraRotation);
+	}
+
+	const FVector3d RayOrigin =
+		FVector3d(CameraLocation)
+		- FVector3d(PlanetActor->GetActorLocation());
+
+	const FVector3d RayDirection =
+		FVector3d(CameraRotation.Vector()).GetSafeNormal();
+
+	const double PreviewRadiusCentimetres =
+		FMath::Max(100.0, DebugPreviewRadiusCentimetres);
+
+	if (RayDirection.SizeSquared() <= 0.000000000001)
+	{
+		return false;
+	}
+
+	const double RayOriginProjection =
+		FVector3d::DotProduct(RayOrigin, RayDirection);
+
+	const double RayOriginLengthSquared =
+		RayOrigin.SizeSquared();
+
+	const double Discriminant =
+		(RayOriginProjection * RayOriginProjection)
+		- (RayOriginLengthSquared
+			- (PreviewRadiusCentimetres * PreviewRadiusCentimetres));
+
+	if (Discriminant < 0.0)
+	{
+		return false;
+	}
+
+	const double Root = FMath::Sqrt(Discriminant);
+	const double NearDistance = -RayOriginProjection - Root;
+	const double FarDistance = -RayOriginProjection + Root;
+
+	const double HitDistance =
+		NearDistance > 0.0
+		? NearDistance
+		: FarDistance > 0.0
+			? FarDistance
+			: -1.0;
+
+	if (HitDistance <= 0.0)
+	{
+		return false;
+	}
+
+	const FVector3d HitPoint =
+		RayOrigin + (RayDirection * HitDistance);
+
+	if (HitPoint.SizeSquared() <= 0.000000000001)
+	{
+		return false;
+	}
+
+	OutUnitDirection = HitPoint.GetSafeNormal();
+
+	return true;
 }
 
 bool UVoraxiaPlanetDebugComponent::ShouldDrawDebugVisualisation() const
@@ -578,12 +1084,41 @@ void UVoraxiaPlanetDebugComponent::DrawSelectedSurfaceSample(
 
 	if (bDrawSurfaceSampleLabel)
 	{
-		const FString SurfaceSampleLabel = FString::Printf(
+		FString SurfaceSampleLabel = FString::Printf(
 			TEXT("Sample %s | U=%.1f m | V=%.1f m | Alt=%.1f m"),
 			GetCubeFaceLabel(DebugSurfaceSampleFace),
 			DebugSurfaceSampleUMetres,
 			DebugSurfaceSampleVMetres,
 			DebugSurfaceSampleAltitudeMetres);
+
+		if (bShowTerrainProbeMetricsInLabel)
+		{
+			FVoraxiaPlanetTerrainSample TerrainSample;
+
+			if (VoraxiaPlanetTerrain::SampleMacroTerrain(
+				RuntimeState,
+				UnitDirection,
+				TerrainSample))
+			{
+				const double SurfaceRadiusMetres =
+					RuntimeState.RadiusMetres
+					+ TerrainSample.HeightMetres;
+
+				const double OffsetFromTerrainMetres =
+					DebugSurfaceSampleAltitudeMetres
+					- TerrainSample.HeightMetres;
+
+				SurfaceSampleLabel += FString::Printf(
+					TEXT("\nTerrain Height: %+.1f m | Surface Radius: %.1f m")
+					TEXT("\nOffset From Terrain: %+.1f m")
+					TEXT("\nContinentalness: %.3f | Mountainness: %.3f"),
+					TerrainSample.HeightMetres,
+					SurfaceRadiusMetres,
+					OffsetFromTerrainMetres,
+					TerrainSample.Continentalness,
+					TerrainSample.Mountainness);
+			}
+		}
 
 		const FVector LabelPosition =
 			SampleLocation + ToDebugVector(

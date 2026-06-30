@@ -14,6 +14,7 @@
 
 #include "VoraxiaPlanetSurfacePatchComponent.generated.h"
 
+class UMaterialInterface;
 struct FPropertyChangedEvent;
 struct FVoraxiaPlanetRuntimeState;
 
@@ -223,6 +224,55 @@ protected:
 	float DebugColourIntensity = 1.00f;
 
 	/**
+	 * @brief Slope angle mapped to the strongest terrain-slope debug colour.
+	 *
+	 * This is a visual remapping control only. Lower values increase contrast
+	 * for broad planetary landforms, allowing mountain belts and rift shoulders
+	 * to reach yellow and red without changing sampled terrain, mesh geometry,
+	 * collision, persistence, networking, or gameplay slope calculations.
+	 *
+	 * A value near 20 degrees is useful for the current kilometre-scale macro
+	 * terrain diagnostic. Future voxel-scale previews may use a wider range.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Debug",
+		meta = (
+			DisplayName = "Terrain Slope Visual Range",
+			ClampMin = "1.0",
+			ClampMax = "89.0",
+			UIMin = "5.0",
+			UIMax = "45.0",
+			Units = "deg",
+			EditCondition = "bUseChunkDebugColours && DebugColourMode == EVoraxiaPlanetPreviewDebugColourMode::TerrainSlope",
+			EditConditionHides))
+	double TerrainSlopeVisualRangeDegrees = 20.0;
+
+	/**
+	 * @brief Optional authored material used when preview debug colours are disabled.
+	 *
+	 * Assign a simple clay, rock, or other diagnostic material here to inspect
+	 * macro terrain shape under ordinary lighting. When Use Debug Colours is
+	 * enabled, the component deliberately overrides this material with Unreal's
+	 * vertex-colour debug material so height, slope, and chunk diagnostics remain
+	 * visible.
+	 *
+	 * Leaving this unset restores the Dynamic Mesh component's default material.
+	 * This is local preview presentation only and never affects replicated terrain,
+	 * persistence, collision, or final streamed-terrain materials.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Terrain Preview|Material",
+		meta = (
+			DisplayName = "Preview Surface Material",
+			EditCondition = "!bUseChunkDebugColours",
+			EditConditionHides))
+	TObjectPtr<UMaterialInterface> PreviewSurfaceMaterial = nullptr;
+
+	/**
 	 * @brief Generates a diagnostic preview containing every cube face of the planet.
 	 *
 	 * When enabled, the component ignores the single-face address and span
@@ -365,10 +415,11 @@ private:
 		const FVoraxiaPlanetRuntimeState& RuntimeState) const;
 
 	/**
-	 * @brief Applies the vertex-colour diagnostic material or clears the override.
+	 * @brief Applies either the vertex-colour diagnostic material or the authored preview material.
 	 *
-	 * The supplied engine material exists solely for preview diagnostics. Final
-	 * terrain rendering will use Voraxia-authored terrain materials instead.
+	 * Debug-colour modes deliberately use Unreal's supplied vertex-colour material.
+	 * When debug colours are disabled, this applies PreviewSurfaceMaterial instead.
+	 * Final terrain rendering will use separate Voraxia terrain materials later.
 	 */
 	void UpdatePreviewDebugMaterial();
 

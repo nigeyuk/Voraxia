@@ -51,6 +51,10 @@ struct FVoraxiaPlanetTerrainSample
  * These functions deliberately have no UObject ownership, mesh dependency,
  * networking code, world access, or editor state. Given the same runtime state
  * and unit direction, every machine must calculate the same terrain sample.
+ *
+ * Generator Version 1 preserves the original monolithic macro terrain recipe.
+ * Generator Version 2 composes quiet base terrain with optional independent
+ * terrain feature modules, beginning with tectonics.
  */
 namespace VoraxiaPlanetTerrain
 {

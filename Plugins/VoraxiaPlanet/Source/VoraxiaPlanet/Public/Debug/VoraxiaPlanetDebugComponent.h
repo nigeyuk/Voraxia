@@ -15,6 +15,7 @@
 #include "VoraxiaPlanetDebugComponent.generated.h"
 
 struct FVoraxiaPlanetRuntimeState;
+class SVoraxiaTerrainProbeWidget;
 
 /**
  * @brief Draws a compact visual reference of Voraxia's cube-sphere maths.
@@ -57,6 +58,19 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 
 	/**
+	 * @brief Creates the local terrain-probe overlay after the component enters play.
+	 */
+	virtual void BeginPlay() override;
+
+	/**
+	 * @brief Removes the local terrain-probe overlay before the component leaves play.
+	 *
+	 * @param EndPlayReason Reason the owning actor is ending play.
+	 */
+	virtual void EndPlay(
+		const EEndPlayReason::Type EndPlayReason) override;
+
+	/**
 	 * @brief Returns whether this component should draw its runtime visualisation.
 	 *
 	 * This requires both the local component option and Project Settings:
@@ -75,6 +89,33 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Voraxia Planet|Debug")
 	void DrawPlanetReferenceFrame();
+
+	/**
+	 * @brief Samples terrain under the current local player or free-camera view.
+	 *
+	 * This queries the active player-controller viewpoint rather than a possessed
+	 * pawn. In PIE it remains usable after F8 ejects the pawn and hands control
+	 * to the free debug camera.
+	 *
+	 * @return True when the camera ray hit the compact preview sphere and the
+	 * selected sample was updated from deterministic terrain data.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Voraxia Planet|Debug|Terrain Probe")
+	bool SampleTerrainFromCurrentView();
+
+	/**
+	 * @brief Returns the current terrain-probe readout for local debug presentation.
+	 *
+	 * @return Multi-line diagnostic text derived from the selected sample.
+	 */
+	FText GetTerrainProbeDisplayText() const;
+
+	/**
+	 * @brief Returns whether the local terrain-probe Slate overlay should be visible.
+	 *
+	 * @return True when the overlay is enabled and planet debugging is active.
+	 */
+	bool ShouldShowTerrainProbeOverlay() const;
 
 protected:
 	/**
@@ -241,6 +282,74 @@ protected:
 	bool bDrawSurfaceSampleLabel = true;
 
 	/**
+	 * @brief Enables middle-mouse terrain sampling from the active camera view.
+	 *
+	 * The source is the local player controller viewpoint, not a possessed pawn.
+	 * This makes the workflow suitable for PIE free-camera inspection after F8.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Debug|Terrain Probe",
+		meta = (DisplayName = "Enable Free-Camera Terrain Probe"))
+	bool bEnableFreeCameraTerrainProbe = true;
+
+	/**
+	 * @brief Uses middle mouse button to update the terrain probe from camera aim.
+	 *
+	 * The input is edge-detected, so holding the button does not repeatedly
+	 * resample every frame. Manual Surface Sample controls remain available for
+	 * exact repeatable coordinate-based inspections.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Debug|Terrain Probe",
+		meta = (DisplayName = "Probe With Middle Mouse Button", EditCondition = "bEnableFreeCameraTerrainProbe"))
+	bool bProbeTerrainWithMiddleMouseButton = true;
+
+	/**
+	 * @brief Includes deterministic terrain metrics in the orange sample label.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Debug|Terrain Probe",
+		meta = (DisplayName = "Show Terrain Metrics In Label"))
+	bool bShowTerrainProbeMetricsInLabel = true;
+
+	/**
+	 * @brief Displays a local Slate readout in the PIE game viewport.
+	 *
+	 * The overlay belongs to the local game viewport rather than a pawn, so it
+	 * remains visible after F8 ejects the player pawn. It is debug presentation
+	 * only and is never replicated or included in packaged gameplay UI.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Debug|Terrain Probe",
+		meta = (DisplayName = "Show Terrain Probe Overlay"))
+	bool bShowTerrainProbeOverlay = true;
+
+	/**
+	 * @brief Continuously samples the centre of the active PIE or editor free-camera view.
+	 *
+	 * With this enabled, flying the F8 free camera across the compact planet
+	 * preview updates the selected surface sample, orange marker, and Slate
+	 * readout every frame. No pawn possession, collision, or click binding is
+	 * required.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Voraxia Planet|Debug|Terrain Probe",
+		meta = (
+			DisplayName = "Continuously Sample Centre View",
+			EditCondition = "bEnableFreeCameraTerrainProbe"))
+	bool bContinuouslySampleTerrainProbe = true;
+
+	/**
 	 * @brief Radius of the local debug preview, expressed in Unreal centimetres.
 	 *
 	 * This is only a visual scale. It does not alter the planet's real radius,
@@ -359,6 +468,45 @@ void DrawFaceCoordinateCurve(
 	const FColor& LineColour,
 	float LineThickness) const;
 	/**
+	 * @brief Ensures the local Slate terrain-probe overlay is attached to the game viewport.
+	 */
+	void EnsureTerrainProbeOverlay();
+
+	/**
+	 * @brief Removes the local Slate terrain-probe overlay from the game viewport.
+	 */
+	void RemoveTerrainProbeOverlay();
+
+	/**
+	 * @brief Attempts to obtain the active F8/editor viewport camera before player-camera fallback.
+	 *
+	 * @param OutCameraLocation Receives the camera world location.
+	 * @param OutCameraRotation Receives the camera world rotation.
+	 *
+	 * @return True when an editor viewport camera is available.
+	 */
+	bool TryGetEditorFreeCameraView(
+		FVector& OutCameraLocation,
+		FRotator& OutCameraRotation) const;
+
+	/**
+	 * @brief Checks local camera input and updates the terrain probe on a middle-click edge.
+	 *
+	 * @return True when a new valid terrain probe location was selected.
+	 */
+	bool TryUpdateTerrainProbeFromCameraInput();
+
+	/**
+	 * @brief Resolves the current local player-controller view into a preview-sphere direction.
+	 *
+	 * @param OutUnitDirection Receives the hit direction from the compact preview centre.
+	 *
+	 * @return True when the view ray intersects the compact debug preview sphere.
+	 */
+	bool TryGetPreviewSphereDirectionFromCurrentView(
+		FVector3d& OutUnitDirection) const;
+
+	/**
 	 * @brief Resolves the selected debug sample into a radial planet direction.
 	 *
 	 * @param RuntimeState Valid replicated planet state.
@@ -389,4 +537,13 @@ void DrawFaceCoordinateCurve(
 		double PreviewRadiusCentimetres,
 		double ArrowLengthCentimetres,
 		float ArrowHeadSize) const;
+	/**
+	 * @brief Local Slate widget retained while this debug component is in play.
+	 */
+	TSharedPtr<SVoraxiaTerrainProbeWidget> TerrainProbeOverlayWidget;
+
+	/**
+	 * @brief Stores the previous middle-mouse state for edge-triggered probing.
+	 */
+	bool bWasTerrainProbeInputDown = false;
 };

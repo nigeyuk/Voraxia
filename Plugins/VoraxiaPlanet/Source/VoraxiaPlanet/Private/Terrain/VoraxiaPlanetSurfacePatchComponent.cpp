@@ -180,6 +180,7 @@ namespace
 	 *
 	 * @param RuntimeState Valid replicated or editor-derived planet state.
 	 * @param UnitDirection Normalised direction from the planet centre.
+	 * @param TerrainSlopeVisualRangeDegrees Slope angle mapped to diagnostic maximum.
 	 * @param OutSlopeNormalised Receives a 0 to 1 diagnostic steepness value.
 	 *
 	 * @return True when the slope estimate was produced.
@@ -187,6 +188,7 @@ namespace
 	bool TrySampleMacroTerrainSlopeNormalised(
 		const FVoraxiaPlanetRuntimeState& RuntimeState,
 		const FVector3d& UnitDirection,
+		const double TerrainSlopeVisualRangeDegrees,
 		double& OutSlopeNormalised)
 	{
 		OutSlopeNormalised = 0.0;
@@ -198,8 +200,13 @@ namespace
 		}
 
 		constexpr double SlopeSampleDistanceMetres = 1000.0;
-		constexpr double MaximumVisualSlopeDegrees = 55.0;
 		constexpr double DegreesPerRadian = 57.29577951308232;
+
+		const double SafeTerrainSlopeVisualRangeDegrees =
+			FMath::Clamp(
+				TerrainSlopeVisualRangeDegrees,
+				1.0,
+				89.0);
 
 		const FVector3d SafeUnitDirection =
 			UnitDirection.GetSafeNormal();
@@ -291,7 +298,7 @@ namespace
 			std::atan(GradientMagnitude) * DegreesPerRadian;
 
 		OutSlopeNormalised = FMath::Clamp(
-			SlopeDegrees / MaximumVisualSlopeDegrees,
+			SlopeDegrees / SafeTerrainSlopeVisualRangeDegrees,
 			0.0,
 			1.0);
 
@@ -353,6 +360,7 @@ namespace
 	 * @param RuntimeState Planet state used for height normalisation and slope probes.
 	 * @param UnitDirection Global sample direction.
 	 * @param TerrainSample Current deterministic terrain sample.
+	 * @param TerrainSlopeVisualRangeDegrees Slope angle mapped to diagnostic maximum.
 	 * @param Intensity Local preview brightness multiplier.
 	 *
 	 * @return Vertex colour for the active local diagnostic mode.
@@ -363,6 +371,7 @@ namespace
 		const FVoraxiaPlanetRuntimeState& RuntimeState,
 		const FVector3d& UnitDirection,
 		const FVoraxiaPlanetTerrainSample& TerrainSample,
+		const double TerrainSlopeVisualRangeDegrees,
 		const float Intensity)
 	{
 		switch (DebugColourMode)
@@ -380,6 +389,7 @@ namespace
 			return TrySampleMacroTerrainSlopeNormalised(
 				RuntimeState,
 				UnitDirection,
+				TerrainSlopeVisualRangeDegrees,
 				SlopeNormalised)
 				? GetTerrainSlopeDebugColour(
 					SlopeNormalised,
@@ -426,6 +436,7 @@ namespace
 	 * @param bUseDebugVertexColours Whether vertices should receive diagnostic vertex colours.
 	 * @param DebugColourMode Local diagnostic visualisation mode.
 	 * @param DebugColourIntensity Brightness multiplier for the selected diagnostic colour.
+	 * @param TerrainSlopeVisualRangeDegrees Slope angle mapped to the strongest diagnostic colour.
 	 * @param DebugColour Stable address-based fallback colour for this chunk.
 	 * @param OutMesh Receives generated Dynamic Mesh geometry.
 	 *
@@ -441,6 +452,7 @@ namespace
 		const bool bUseDebugVertexColours,
 		const EVoraxiaPlanetPreviewDebugColourMode DebugColourMode,
 		const float DebugColourIntensity,
+		const double TerrainSlopeVisualRangeDegrees,
 		const FLinearColor& DebugColour,
 		FDynamicMesh3& OutMesh)
 	{
@@ -645,6 +657,7 @@ namespace
 							RuntimeState,
 							UnitDirection,
 							TerrainSample,
+							TerrainSlopeVisualRangeDegrees,
 							DebugColourIntensity);
 
 					ColourElementIds[VertexArrayIndex] =
@@ -744,6 +757,7 @@ namespace
 	 * @param VisualTerrainHeightExaggeration Preview-only multiplier applied to sampled height.
 	 * @param bUseDebugVertexColours Whether patches should receive stable debug colours.
 	 * @param DebugColourIntensity Brightness multiplier applied to the diagnostic palette.
+	 * @param TerrainSlopeVisualRangeDegrees Slope angle mapped to the strongest diagnostic colour.
 	 * @param OutMesh Receives the merged planet preview mesh.
 	 *
 	 * @return True when at least one valid patch was generated.
@@ -758,6 +772,7 @@ namespace
 		const bool bUseDebugVertexColours,
 		const EVoraxiaPlanetPreviewDebugColourMode DebugColourMode,
 		const float DebugColourIntensity,
+		const double TerrainSlopeVisualRangeDegrees,
 		FDynamicMesh3& OutMesh)
 	{
 		if (!RuntimeState.IsValid())
@@ -814,6 +829,7 @@ namespace
 						bUseDebugVertexColours,
 						DebugColourMode,
 						DebugColourIntensity,
+						TerrainSlopeVisualRangeDegrees,
 						GetChunkDebugColour(
 							ChunkId,
 							DebugColourIntensity),
@@ -944,6 +960,7 @@ RefreshFromPlanetRuntimeState(
 			bUseChunkDebugColours,
 			DebugColourMode,
 			DebugColourIntensity,
+			TerrainSlopeVisualRangeDegrees,
 			GeneratedMesh);
 	}
 	else
@@ -975,6 +992,7 @@ RefreshFromPlanetRuntimeState(
 					bUseChunkDebugColours,
 					DebugColourMode,
 					DebugColourIntensity,
+					TerrainSlopeVisualRangeDegrees,
 					GetChunkDebugColour(
 						ChunkId,
 						DebugColourIntensity),
@@ -1049,6 +1067,12 @@ PostEditChangeProperty(
 			DebugColourIntensity)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
+			TerrainSlopeVisualRangeDegrees)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
+			PreviewSurfaceMaterial)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(
+			UVoraxiaPlanetSurfacePatchComponent,
 			bPreviewEntirePlanet)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(
 			UVoraxiaPlanetSurfacePatchComponent,
@@ -1090,13 +1114,19 @@ UpdatePreviewDebugMaterial()
 {
 	if (!bUseChunkDebugColours)
 	{
-		SetMaterial(0, nullptr);
+		/**
+		 * Use the explicitly authored preview material when diagnostics are off.
+		 * A null assignment intentionally returns the Dynamic Mesh component to its
+		 * normal default material, keeping this optional for all existing planets.
+		 */
+		SetMaterial(0, PreviewSurfaceMaterial);
 		return;
 	}
 
 	/**
 	 * This is an engine-supplied editor/debug material that exposes the primary
-	 * vertex-colour overlay. It is not a final Voraxia surface material.
+	 * vertex-colour overlay. It intentionally overrides PreviewSurfaceMaterial
+	 * while a diagnostic colour mode is active.
 	 */
 	SetMaterial(
 		0,
@@ -1121,6 +1151,11 @@ SanitizePreviewSettings()
 		DebugColourIntensity,
 		0.10f,
 		2.00f);
+
+	TerrainSlopeVisualRangeDegrees = FMath::Clamp(
+		TerrainSlopeVisualRangeDegrees,
+		1.0,
+		89.0);
 
 	VisualTerrainHeightExaggeration = FMath::Clamp(
 		VisualTerrainHeightExaggeration,
