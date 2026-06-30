@@ -7,6 +7,7 @@
 
 #include "Terrain/VoraxiaPlanetTerrainGenerator.h"
 
+#include "Terrain/Features/VoraxiaPlanetImpactCratering.h"
 #include "Terrain/Features/VoraxiaPlanetTectonics.h"
 #include "Terrain/VoraxiaPlanetBaseTerrain.h"
 #include "Terrain/VoraxiaPlanetTerrainNoise.h"
@@ -133,8 +134,8 @@ namespace
 	 *
 	 * 1. Quiet base continents, highlands, and basins.
 	 * 2. Tectonic compression uplift and extension rifts.
-	 * 3. Future volcanic terrain.
-	 * 4. Future impact cratering.
+	 * 3. Impact-crater basins, raised rims, and ejecta disturbance.
+	 * 4. Future volcanic terrain.
 	 * 5. Future hydrological erosion.
 	 * 6. Future ice and glacial shaping.
 	 *
@@ -170,6 +171,16 @@ namespace
 			return false;
 		}
 
+		FVoraxiaPlanetImpactCrateringSample ImpactCratering;
+
+		if (!VoraxiaPlanetImpactCratering::SampleImpactCratering(
+			RuntimeState,
+			UnitDirection,
+			ImpactCratering))
+		{
+			return false;
+		}
+
 		const double SafeMaximumTerrainHeightMetres =
 			FMath::Max(
 				0.0,
@@ -189,7 +200,10 @@ namespace
 			FMath::Clamp(
 				BaseTerrain.HeightMetres
 				+ Tectonics.UpliftMetres
-				- Tectonics.RiftDepthMetres,
+				- Tectonics.RiftDepthMetres
+				- ImpactCratering.BasinDepthMetres
+				+ ImpactCratering.RimHeightMetres
+				+ ImpactCratering.EjectaHeightMetres,
 				-SafeMaximumTerrainDepthMetres,
 				SafeMaximumTerrainHeightMetres);
 
@@ -204,9 +218,13 @@ namespace
 				0.0,
 				1.0);
 
+		OutSample.ImpactCraterness =
+			ImpactCratering.Craterness;
+
 		return FMath::IsFinite(OutSample.HeightMetres)
 			&& FMath::IsFinite(OutSample.Continentalness)
-			&& FMath::IsFinite(OutSample.Mountainness);
+			&& FMath::IsFinite(OutSample.Mountainness)
+			&& FMath::IsFinite(OutSample.ImpactCraterness);
 	}
 }
 

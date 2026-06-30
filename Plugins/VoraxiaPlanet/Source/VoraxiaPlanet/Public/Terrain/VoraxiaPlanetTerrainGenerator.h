@@ -43,6 +43,14 @@ struct FVoraxiaPlanetTerrainSample
 	 * biome classification, and terrain inspection tools.
 	 */
 	double Mountainness = 0.0;
+
+	/**
+	 * @brief Impact-landform emphasis in the range 0 to 1.
+	 *
+	 * Values near one indicate a crater basin, raised rim, or immediate ejecta
+	 * field. It is a diagnostic signal and does not itself alter terrain height.
+	 */
+	double ImpactCraterness = 0.0;
 };
 
 /**
@@ -54,7 +62,7 @@ struct FVoraxiaPlanetTerrainSample
  *
  * Generator Version 1 preserves the original monolithic macro terrain recipe.
  * Generator Version 2 composes quiet base terrain with optional independent
- * terrain feature modules, beginning with tectonics.
+ * terrain feature modules, currently tectonics and impact cratering.
  */
 namespace VoraxiaPlanetTerrain
 {
